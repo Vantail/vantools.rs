@@ -93,11 +93,7 @@ fn parse_manifest(content: &str) -> Result<Manifest, Error> {
 
 /// Validate the required manifest members.
 fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
-    if manifest.name.is_empty() {
-        return Err(Error::ValidationError(String::from(
-            "Manifest name must not be empty",
-        )));
-    }
+    validate_name(&manifest.name)?;
     let version = semver::Version::parse(&manifest.version);
     match version {
         Ok(_) => {}
@@ -116,4 +112,36 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
             manifest.entrypoint
         ))),
     };
+}
+
+/// Validate the plugin name used in the archive file name.
+///
+/// The name is joined onto the target directory to build
+/// `<name>-<version>.van`, so it must be a single path component: free
+/// of path separators, not absolute, without a drive letter, and
+/// neither a `.` nor a `..` segment.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the name is empty or is not
+/// usable as a file name.
+fn validate_name(name: &str) -> Result<(), Error> {
+    if name.is_empty() {
+        return Err(Error::ValidationError(String::from(
+            "Manifest name must not be empty",
+        )));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(invalid_name(name));
+    }
+    let checked = validate_archive_entry(name);
+    return match checked {
+        Ok(()) => Ok(()),
+        Err(_) => Err(invalid_name(name)),
+    };
+}
+
+/// Build the error for a name that cannot be used as a file name.
+fn invalid_name(name: &str) -> Error {
+    return Error::ValidationError(format!("Invalid manifest name: {name}"));
 }
