@@ -55,3 +55,6 @@ out/
 
 # Dependency directories
 node_modules/
+
+# Rust build output
+/target/
