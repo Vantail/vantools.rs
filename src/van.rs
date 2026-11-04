@@ -17,12 +17,29 @@ Options:
 
 /// Parse the process arguments and dispatch a subcommand.
 ///
+/// Arguments that are not valid Unicode are rejected as usage errors
+/// rather than aborting the process.
+///
 /// # Errors
 ///
-/// Returns [`Error::Usage`] when the arguments are missing or unknown,
-/// and [`Error::Runtime`] when writing to the terminal fails.
+/// Returns [`Error::Usage`] when the arguments are missing, unknown, or
+/// not valid Unicode, and [`Error::Runtime`] when writing to the
+/// terminal fails.
 pub fn run() -> Result<()> {
-    return run_with_args(env::args().skip(1));
+    let mut arguments: Vec<String> = Vec::new();
+    for raw_argument in env::args_os().skip(1) {
+        let converted = raw_argument.into_string();
+        let argument = match converted {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::Usage(String::from(
+                    "command-line argument is not valid Unicode",
+                )));
+            }
+        };
+        arguments.push(argument);
+    }
+    return run_with_args(arguments);
 }
 
 /// Parse the given arguments and dispatch a subcommand.
