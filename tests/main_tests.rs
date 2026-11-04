@@ -3,8 +3,8 @@
 use std::io;
 use std::io::Write;
 
-use vantools::cli::{FALLBACK_EXIT_CODE, report_error, to_exit_code};
 use vantools::common::Error;
+use vantools::common::cli::{FALLBACK_EXIT_CODE, report_error, to_exit_code};
 
 /// Writer that always fails, simulating an unavailable stderr.
 struct FailingWriter;

@@ -3,8 +3,8 @@
 use std::io;
 use std::process::ExitCode;
 
-use vantools::cli::{report_error, to_exit_code};
 use vantools::common::VanError;
+use vantools::common::cli::{report_error, to_exit_code};
 use vantools::van;
 
 fn main() -> ExitCode {
