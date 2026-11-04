@@ -65,6 +65,30 @@ fn invalid_entrypoint_is_rejected() {
 }
 
 #[test]
+fn name_with_parent_segment_is_rejected() {
+    let message = name_message("../evil");
+    assert_eq!(message, "Invalid manifest name: ../evil");
+}
+
+#[test]
+fn name_with_separator_is_rejected() {
+    let message = name_message("sub/evil");
+    assert_eq!(message, "Invalid manifest name: sub/evil");
+}
+
+#[test]
+fn absolute_name_is_rejected() {
+    let message = name_message("/tmp/evil");
+    assert_eq!(message, "Invalid manifest name: /tmp/evil");
+}
+
+#[test]
+fn drive_letter_name_is_rejected() {
+    let message = name_message("C:evil");
+    assert_eq!(message, "Invalid manifest name: C:evil");
+}
+
+#[test]
 fn byte_order_mark_is_rejected() {
     let root = temp_root();
     let mut content: Vec<u8> = Vec::new();
@@ -104,6 +128,29 @@ fn pack_does_not_create_archive_for_invalid_manifest() {
     let message = validation_message(error);
     assert_eq!(message, "Manifest name must not be empty");
     assert!(!target.exists() || !contains_archive(&target));
+}
+
+#[test]
+fn pack_does_not_write_outside_target_for_escaping_name() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    let dist = source.join("dist");
+    create_dir(&dist);
+    write_file(&dist.join("app.ts"), b"// app\n");
+    let content = "{\"name\":\"../escaped\",\"version\":\"1.2.3\",\
+\"entrypoint\":\"app.ts\"}";
+    write_file(&source.join("manifest.json"), content.as_bytes());
+    let target = root.path().join("out").join("target");
+    let command = PackCommand::new(source, target);
+    let result = command.run();
+    let error = match result {
+        Ok(()) => panic!("expected packing to fail"),
+        Err(value) => value,
+    };
+    let message = validation_message(error);
+    assert_eq!(message, "Invalid manifest name: ../escaped");
+    let escaped = root.path().join("out").join("escaped-1.2.3.van");
+    assert!(!escaped.exists());
 }
 
 /// Create a temporary directory for one test.
@@ -150,6 +197,16 @@ fn manifest_message(source: &Path) -> String {
         Err(value) => value,
     };
     return validation_message(error);
+}
+
+/// Validate a manifest carrying `name` and return the error message.
+fn name_message(name: &str) -> String {
+    let root = temp_root();
+    let content = format!(
+        "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    return manifest_message(root.path());
 }
 
 /// Extract the message of a validation error.
