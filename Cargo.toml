@@ -24,3 +24,7 @@ indexing_slicing = "deny"
 too_many_lines = "deny"
 exhaustive_structs = "deny"
 exhaustive_enums = "deny"
+
+[[bin]]
+name = "van"
+path = "src/main.rs"
