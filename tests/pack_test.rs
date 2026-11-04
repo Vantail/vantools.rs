@@ -181,6 +181,25 @@ fn pack_archives_the_validated_manifest_bytes() {
 }
 
 #[test]
+fn pack_streams_source_files_in_chunks() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let payload = "chunked payload line\n".repeat(1024);
+    write_file(&source.join("dist").join("app.ts"), &payload);
+    let target = root.path().join("target");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    let archive = target.join(BAD_ARCHIVE);
+    let archived = read_archive_entry(&archive, "dist/app.ts");
+    assert_eq!(archived.as_slice(), payload.as_bytes());
+}
+
+#[test]
 fn validate_archive_entry_rejects_backslashes() {
     let error = entry_error("dist\\app.ts");
     assert_validation_message(
