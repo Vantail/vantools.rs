@@ -38,6 +38,24 @@ fn version_prints_name_and_version() {
 }
 
 #[test]
+fn help_rejects_trailing_argument() {
+    let output = run(&["--help", "--anything"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error: unknown subcommand '--anything'"));
+}
+
+#[test]
+fn version_rejects_trailing_argument() {
+    let output = run(&["--version", "foo"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(UNKNOWN_MESSAGE));
+}
+
+#[test]
 fn missing_subcommand_prints_help_and_exits_two() {
     let output = run(&[]);
     assert_eq!(output.status.code(), Some(2));
