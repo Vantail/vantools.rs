@@ -30,11 +30,86 @@ human contributor or a coding agent. Follow them without exception.
 
 ### Commit Message Format
 
-- Use imperative mood, for example: `Add SECURITY.md`,
-  `Fix null check in parser`, `Update dependency versions`.
-- Keep the subject line under 72 characters.
+Use the Conventional Commits structure for every commit:
+
+    <type>(<scope>): <short summary>
+
+    <body>
+
+    [optional footer(s)]
+
+_Types_
+
+- `feat` — a new feature
+- `fix` — a bug fix
+- `docs` — documentation-only changes
+- `style` — formatting, whitespace, or other non-behavioral changes
+- `refactor` — a change that neither fixes a bug nor adds a feature
+- `perf` — a performance improvement
+- `test` — adding or fixing tests
+- `build` — build-system or dependency changes
+- `ci` — CI configuration changes
+- `chore` — maintenance tasks that do not fit any other type
+- `revert` — reverting a previous commit
+
+_Subject line_
+
+- Format: `<type>(<scope>): <short summary>`.
+- The scope is optional. Use it when the change is confined to a
+  recognizable component, for example `parser`, `auth`, or `docs`.
+  Scope is lowercase.
+- Use imperative mood in the summary, for example `add`, `fix`,
+  `update` — not `added`, `adds`, or `fixed`.
+- The entire subject line must not exceed 72 characters.
+- Do not end the subject line with a period.
 - Do not use emojis unless the user explicitly requests them.
-- Never include `Co-authored-by:` trailers identifying the coding agent.
+- For a breaking change, append `!` after the type or scope, for
+  example `feat(api)!: remove v1 endpoints`.
+
+_Body_
+
+- Separate the subject line from the body with exactly one blank line.
+- The body is required and must describe **what changed**. A reader who
+  sees only the commit must be able to understand the scope of the
+  change.
+- For a trivial change (for example a typo fix), a single short body
+  line is sufficient; the body must not be omitted entirely.
+- Use bullet points or short paragraphs. Wrap lines at approximately 72
+  characters for readability.
+- Where useful, describe **why** the change was made in addition to what
+  changed.
+- Do not restate the subject line or narrate obvious implementation
+  details.
+
+_Footers_
+
+- Optional. Use footers for breaking changes
+  (`BREAKING CHANGE: <description>`), issue references
+  (`Refs: #123`), or similar metadata.
+- Never include a `Co-authored-by:` trailer that identifies the coding
+  agent.
+
+_Examples_
+
+    feat(parser): add support for nested expressions
+
+    - Extend the grammar to allow parenthesized subexpressions
+    - Add recursive-descent handling for grouping tokens
+    - Add unit tests covering three levels of nesting
+
+    fix(auth): prevent token refresh on expired session
+
+    - Check token expiry before issuing a refresh request
+    - Return a 401 response when the session has already expired
+
+    docs: correct broken link in CONTRIBUTING.md
+
+    - Update the anchor target to match the current heading text
+
+_Existing commits_
+
+- Existing commits are not rewritten. This format applies to new
+  commits only.
 
 ### Identity
 
