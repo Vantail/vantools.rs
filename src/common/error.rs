@@ -26,6 +26,8 @@ pub enum Error {
     Usage(String),
     /// A runtime error that is not a usage error.
     Runtime(String),
+    /// An archive path or file type failed validation.
+    ValidationError(String),
 }
 
 impl VanError for Error {
@@ -33,6 +35,7 @@ impl VanError for Error {
         return match self {
             Error::Usage(_) => 2,
             Error::Runtime(_) => 1,
+            Error::ValidationError(_) => 1,
         };
     }
 }
@@ -44,6 +47,9 @@ impl fmt::Display for Error {
                 return write!(formatter, "error: {message}");
             }
             Error::Runtime(message) => {
+                return write!(formatter, "error: {message}");
+            }
+            Error::ValidationError(message) => {
                 return write!(formatter, "error: {message}");
             }
         }

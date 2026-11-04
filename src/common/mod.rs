@@ -5,6 +5,7 @@ pub mod cli;
 pub mod command;
 pub mod error;
 pub mod manifest;
+pub mod validation;
 
 pub use error::{Error, Result, VanError};
 

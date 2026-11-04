@@ -12,6 +12,9 @@ use zip::write::SimpleFileOptions;
 use crate::common::Error;
 use crate::common::command::Command;
 use crate::common::manifest::Manifest;
+use crate::common::validation::{
+    validate_archive_entry, validate_file_type, validate_no_node_modules,
+};
 
 /// Name of the manifest file expected at the source root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -34,13 +37,25 @@ pub struct PackCommand {
     pub target: PathBuf,
 }
 
+/// A validated source file scheduled for the archive.
+struct ArchiveEntry {
+    /// Name of the entry inside the archive.
+    archive_name: String,
+    /// Path of the file on disk.
+    source_path: PathBuf,
+}
+
 impl Command for PackCommand {
     fn run(&self) -> Result<(), Error> {
         let manifest_path = self.source.join(MANIFEST_FILE_NAME);
         let dist_path = self.source.join(DIST_DIRECTORY_NAME);
         require_directory(&self.source, "source directory")?;
-        require_file(&manifest_path, "manifest.json")?;
-        require_directory(&dist_path, "dist directory")?;
+        require_file(&manifest_path, MANIFEST_FILE_NAME)?;
+        require_directory(&dist_path, DIST_DIRECTORY_NAME)?;
+        validate_file_type(&manifest_path)?;
+        validate_file_type(&dist_path)?;
+        let mut entries: Vec<ArchiveEntry> = Vec::new();
+        collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
         self.ensure_target()?;
         let manifest = Manifest::from_dir(&self.source)?;
         let archive_path = self.archive_path(&manifest);
@@ -56,7 +71,7 @@ impl Command for PackCommand {
         let mut writer = ZipWriter::new(file);
         let options = default_file_options();
         add_manifest(&mut writer, &manifest_path, options)?;
-        add_directory(&mut writer, &dist_path, DIST_DIRECTORY_NAME, options)?;
+        write_entries(&mut writer, &entries, options)?;
         let finished = writer.finish();
         return match finished {
             Ok(_) => Ok(()),
@@ -189,12 +204,32 @@ fn add_file(
     };
 }
 
-/// Add every file below `directory` under `prefix`.
-fn add_directory(
+/// Write the validated entries into the archive.
+fn write_entries(
     writer: &mut ZipWriter<File>,
+    entries: &[ArchiveEntry],
+    options: SimpleFileOptions,
+) -> Result<(), Error> {
+    for entry in entries {
+        let content = match fs::read(&entry.source_path) {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to read {}: {error}",
+                    entry.source_path.display()
+                )));
+            }
+        };
+        add_file(writer, &entry.archive_name, &content, options)?;
+    }
+    return Ok(());
+}
+
+/// Validate and collect every file below `directory` under `prefix`.
+fn collect_entries(
     directory: &Path,
     prefix: &str,
-    options: SimpleFileOptions,
+    entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), Error> {
     let read = match fs::read_dir(directory) {
         Ok(value) => value,
@@ -205,9 +240,9 @@ fn add_directory(
             )));
         }
     };
-    let mut entries = read;
+    let mut read = read;
     loop {
-        let next = entries.next();
+        let next = read.next();
         let entry = match next {
             None => break,
             Some(Ok(value)) => value,
@@ -218,19 +253,19 @@ fn add_directory(
                 )));
             }
         };
-        add_entry(writer, &entry, prefix, options)?;
+        collect_entry(&entry, prefix, entries)?;
     }
     return Ok(());
 }
 
-/// Add one directory entry under `prefix`, recursing into directories.
-fn add_entry(
-    writer: &mut ZipWriter<File>,
+/// Validate one directory entry and queue it, recursing into directories.
+fn collect_entry(
     entry: &fs::DirEntry,
     prefix: &str,
-    options: SimpleFileOptions,
+    entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), Error> {
     let entry_path = entry.path();
+    validate_file_type(&entry_path)?;
     let file_name = match entry.file_name().into_string() {
         Ok(value) => value,
         Err(_) => {
@@ -241,6 +276,8 @@ fn add_entry(
         }
     };
     let archive_name = format!("{prefix}/{file_name}");
+    validate_no_node_modules(Path::new(&archive_name))?;
+    validate_archive_entry(&archive_name)?;
     let file_type = match entry.file_type() {
         Ok(value) => value,
         Err(error) => {
@@ -251,22 +288,17 @@ fn add_entry(
         }
     };
     if file_type.is_dir() {
-        return add_directory(writer, &entry_path, &archive_name, options);
+        return collect_entries(&entry_path, &archive_name, entries);
     }
     if file_type.is_file() {
-        let content = match fs::read(&entry_path) {
-            Ok(value) => value,
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to read {}: {error}",
-                    entry_path.display()
-                )));
-            }
-        };
-        return add_file(writer, &archive_name, &content, options);
+        entries.push(ArchiveEntry {
+            archive_name,
+            source_path: entry_path,
+        });
+        return Ok(());
     }
-    return Err(Error::Runtime(format!(
-        "unsupported file type: {}",
+    return Err(Error::ValidationError(format!(
+        "Symlinks or non-regular files are not allowed: {}",
         entry_path.display()
     )));
 }
