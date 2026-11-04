@@ -68,12 +68,36 @@ where
         Some(value) => value,
     };
     if argument == "--help" {
-        return write_stdout(HELP_TEXT);
+        let checked = reject_extra_arguments(arguments);
+        return match checked {
+            Ok(()) => write_stdout(HELP_TEXT),
+            Err(error) => Err(error),
+        };
     }
     if argument == "--version" {
-        return write_version();
+        let checked = reject_extra_arguments(arguments);
+        return match checked {
+            Ok(()) => write_version(),
+            Err(error) => Err(error),
+        };
     }
     return Err(Error::Usage(format_unknown_subcommand(&argument)));
+}
+
+/// Reject any argument that follows `--help` or `--version`.
+///
+/// # Errors
+///
+/// Returns [`Error::Usage`] for the first extra argument.
+fn reject_extra_arguments<I>(mut arguments: I) -> Result<()>
+where
+    I: Iterator<Item = String>,
+{
+    let extra = arguments.next();
+    return match extra {
+        None => Ok(()),
+        Some(value) => Err(Error::Usage(format_unknown_subcommand(&value))),
+    };
 }
 
 /// Render an unknown subcommand as a safe single-line diagnostic.
