@@ -2,6 +2,7 @@
 
 use std::fs::{self, File};
 use std::io;
+use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -60,12 +61,13 @@ impl Command for PackCommand {
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
         self.ensure_target()?;
-        let manifest = Manifest::from_dir(&self.source)?;
+        let loaded = Manifest::from_dir_with_bytes(&self.source)?;
+        let (manifest, manifest_bytes) = loaded;
         let archive_path = self.archive_path(&manifest);
         let file = create_archive_file(&archive_path)?;
         let mut writer = ZipWriter::new(file);
         let options = default_file_options();
-        add_manifest(&mut writer, &manifest_path, options)?;
+        add_manifest(&mut writer, &manifest_bytes, options)?;
         write_entries(&mut writer, &entries, options)?;
         let finished = writer.finish();
         return match finished {
@@ -193,22 +195,13 @@ fn create_archive_file(path: &Path) -> Result<File, Error> {
     };
 }
 
-/// Add the manifest to the archive root.
+/// Add the validated manifest bytes to the archive root.
 fn add_manifest(
     writer: &mut ZipWriter<File>,
-    manifest_path: &Path,
+    manifest_bytes: &[u8],
     options: SimpleFileOptions,
 ) -> Result<(), Error> {
-    let content = match fs::read(manifest_path) {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to read {}: {error}",
-                manifest_path.display()
-            )));
-        }
-    };
-    return add_file(writer, MANIFEST_FILE_NAME, &content, options);
+    return add_file(writer, MANIFEST_FILE_NAME, manifest_bytes, options);
 }
 
 /// Add `content` to the archive under `archive_name`.
@@ -236,25 +229,66 @@ fn add_file(
     };
 }
 
-/// Write the validated entries into the archive.
+/// Write the collected entries into the archive.
 fn write_entries(
     writer: &mut ZipWriter<File>,
     entries: &[ArchiveEntry],
     options: SimpleFileOptions,
 ) -> Result<(), Error> {
     for entry in entries {
-        let content = match fs::read(&entry.source_path) {
-            Ok(value) => value,
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to read {}: {error}",
-                    entry.source_path.display()
-                )));
-            }
-        };
-        add_file(writer, &entry.archive_name, &content, options)?;
+        add_source_file(writer, entry, options)?;
     }
     return Ok(());
+}
+
+/// Validate one collected file and add it to the archive.
+///
+/// The file is inspected with [`fs::symlink_metadata`] immediately before
+/// it is opened, and the opened handle is checked again through
+/// [`File::metadata`]; the content is then read from that same handle. A
+/// path swapped for a symlink or another file after the collection step
+/// is therefore rejected instead of contributing content from elsewhere.
+fn add_source_file(
+    writer: &mut ZipWriter<File>,
+    entry: &ArchiveEntry,
+    options: SimpleFileOptions,
+) -> Result<(), Error> {
+    let entry_path = &entry.source_path;
+    validate_file_type(entry_path)?;
+    let opened = File::open(entry_path);
+    let mut file = match opened {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read {}: {error}",
+                entry_path.display()
+            )));
+        }
+    };
+    let metadata = match file.metadata() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                entry_path.display()
+            )));
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return Err(Error::ValidationError(format!(
+            "Symlinks or non-regular files are not allowed: {}",
+            entry_path.display()
+        )));
+    }
+    let mut content: Vec<u8> = Vec::new();
+    let read = file.read_to_end(&mut content);
+    return match read {
+        Ok(_) => add_file(writer, &entry.archive_name, &content, options),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to read {}: {error}",
+            entry_path.display()
+        ))),
+    };
 }
 
 /// Validate and collect every file below `directory` under `prefix`.

@@ -1,6 +1,7 @@
 //! Integration tests for the `pack` command and the path validators.
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use vantools::common::validation::{
     validate_archive_entry, validate_no_node_modules,
 };
 use vantools::pack::PackCommand;
+use zip::ZipArchive;
 
 /// Name of the archive the example plugin must produce.
 const EXPECTED_ARCHIVE: &str = "test-plugin-0.1.0.van";
@@ -22,6 +24,10 @@ const TEST_MANIFEST: &str =
 
 /// Name of the archive built from [`TEST_MANIFEST`].
 const BAD_ARCHIVE: &str = "bad-plugin-0.1.0.van";
+
+/// Manifest with whitespace and an unknown member, used to prove that
+/// the archived bytes are copied verbatim.
+const RAW_MANIFEST: &str = "{\n  \"name\": \"raw-plugin\",\n  \"version\": \"2.0.0\",\n  \"entrypoint\": \"app.ts\",\n  \"extra\": \"ignored\"\n}";
 
 #[test]
 fn pack_creates_van_archive() {
@@ -152,6 +158,26 @@ fn pack_overwrites_existing_regular_archive() {
         Err(error) => panic!("failed to read the archive: {error}"),
     };
     assert!(written.starts_with(b"PK".as_slice()));
+}
+
+#[test]
+fn pack_archives_the_validated_manifest_bytes() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    let dist = source.join("dist");
+    create_dir(&dist);
+    write_file(&dist.join("app.ts"), "// placeholder\n");
+    write_file(&source.join("manifest.json"), RAW_MANIFEST);
+    let target = root.path().join("target");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    let archive = target.join("raw-plugin-2.0.0.van");
+    let archived = read_archive_entry(&archive, "manifest.json");
+    assert_eq!(archived.as_slice(), RAW_MANIFEST.as_bytes());
 }
 
 #[test]
@@ -286,6 +312,32 @@ fn write_file(path: &Path, contents: &str) {
         Ok(()) => {}
         Err(error) => panic!("failed to write {}: {error}", path.display()),
     }
+}
+
+/// Read one entry from a `.van` archive.
+fn read_archive_entry(archive: &Path, entry_name: &str) -> Vec<u8> {
+    let opened = fs::File::open(archive);
+    let file = match opened {
+        Ok(value) => value,
+        Err(error) => panic!("failed to open {}: {error}", archive.display()),
+    };
+    let reader = ZipArchive::new(file);
+    let mut archive_file = match reader {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {}: {error}", archive.display()),
+    };
+    let entry = archive_file.by_name(entry_name);
+    let mut entry_file = match entry {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {entry_name}: {error}"),
+    };
+    let mut content: Vec<u8> = Vec::new();
+    let read = entry_file.read_to_end(&mut content);
+    match read {
+        Ok(_) => {}
+        Err(error) => panic!("failed to read {entry_name}: {error}"),
+    }
+    return content;
 }
 
 /// Run `pack` and return the error it must produce.
