@@ -15,6 +15,9 @@ Options:
   --version  Show the version
 ";
 
+/// Maximum number of argument characters echoed in a diagnostic.
+const MAX_ECHO_CHARS: usize = 64;
+
 /// Parse the process arguments and dispatch a subcommand.
 ///
 /// Arguments that are not valid Unicode are rejected as usage errors
@@ -70,7 +73,24 @@ where
     if argument == "--version" {
         return write_version();
     }
-    return Err(Error::Usage(format!("unknown subcommand '{argument}'")));
+    return Err(Error::Usage(format_unknown_subcommand(&argument)));
+}
+
+/// Render an unknown subcommand as a safe single-line diagnostic.
+///
+/// The argument is limited to [`MAX_ECHO_CHARS`] characters so that a very
+/// long value cannot flood the terminal, and control characters are escaped
+/// so that the message cannot inject terminal sequences or forge lines.
+fn format_unknown_subcommand(argument: &str) -> String {
+    let mut limited = String::new();
+    for (index, character) in argument.chars().enumerate() {
+        if index >= MAX_ECHO_CHARS {
+            break;
+        }
+        limited.push(character);
+    }
+    let escaped = limited.escape_debug();
+    return format!("unknown subcommand '{escaped}'");
 }
 
 /// Write the version banner to stdout.
@@ -106,4 +126,27 @@ where
             Err(Error::Runtime(format!("failed to write output: {error}")))
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_ECHO_CHARS, format_unknown_subcommand};
+
+    #[test]
+    fn unknown_subcommand_escapes_control_characters() {
+        let rendered = format_unknown_subcommand("bad\u{1b}[31m\nspoofed");
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(!rendered.contains('\n'));
+        assert!(rendered.contains("\\u{1b}"));
+        assert!(rendered.contains("\\n"));
+    }
+
+    #[test]
+    fn unknown_subcommand_limits_argument_length() {
+        let argument = "a".repeat(MAX_ECHO_CHARS + 10);
+        let rendered = format_unknown_subcommand(&argument);
+        let expected =
+            format!("unknown subcommand '{}'", "a".repeat(MAX_ECHO_CHARS));
+        assert_eq!(rendered, expected);
+    }
 }

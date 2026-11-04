@@ -53,6 +53,27 @@ fn unknown_subcommand_reports_usage_error() {
     assert!(stderr.contains(UNKNOWN_MESSAGE));
 }
 
+#[test]
+fn unknown_subcommand_escapes_control_characters() {
+    let output = run(&["evil\u{1b}[31m\nspoofed"]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains('\u{1b}'));
+    assert_eq!(stderr.lines().count(), 1);
+    assert!(stderr.contains("\\u{1b}"));
+    assert!(stderr.contains("\\n"));
+}
+
+#[test]
+fn unknown_subcommand_bounds_echoed_length() {
+    let argument = "a".repeat(100);
+    let output = run(&[argument.as_str()]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(&"a".repeat(64)));
+    assert!(!stderr.contains(&"a".repeat(65)));
+}
+
 #[cfg(unix)]
 #[test]
 fn non_unicode_argument_is_rejected_without_panicking() {
