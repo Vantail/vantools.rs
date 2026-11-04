@@ -1,0 +1,25 @@
+too-many-lines-threshold = 60
+too-many-arguments-threshold = 6
+
+disallowed-methods = [
+    "std::iter::Iterator::map",
+    "std::iter::Iterator::filter",
+    "std::iter::Iterator::filter_map",
+    "std::iter::Iterator::flat_map",
+    "std::iter::Iterator::fold",
+    "std::iter::Iterator::reduce",
+    "std::iter::Iterator::sum",
+    "std::iter::Iterator::product",
+    "std::iter::Iterator::any",
+    "std::iter::Iterator::all",
+    "std::iter::Iterator::find",
+    "std::iter::Iterator::find_map",
+    "std::iter::Iterator::position",
+    "std::iter::Iterator::collect",
+    "std::iter::Iterator::for_each",
+    "std::iter::Iterator::try_for_each",
+    "std::iter::Iterator::count",
+    "std::iter::Iterator::last",
+    "std::iter::Iterator::nth",
+    "std::iter::Iterator::step_by",
+]
