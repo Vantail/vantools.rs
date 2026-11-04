@@ -3,10 +3,15 @@
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
+use std::str;
 
 use crate::common::Error;
+use crate::common::validation::validate_archive_entry;
 
-/// The parsed `manifest.json` from a plugin directory.
+/// Byte order mark that a manifest must not start with.
+const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
+/// The parsed and validated `manifest.json` from a plugin directory.
 #[derive(Deserialize)]
 #[non_exhaustive]
 pub struct Manifest {
@@ -19,34 +24,96 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Reads and parses the `manifest.json` from the given source directory.
+    /// Reads, parses, and validates the `manifest.json` of a source
+    /// directory.
+    ///
+    /// The manifest must be UTF-8 without a byte order mark, contain a
+    /// non-empty name, a SemVer 2.0.0 version, and a relative
+    /// entrypoint path.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Runtime`] when the manifest cannot be read or does
-    /// not contain a valid manifest object.
+    /// Returns [`Error::Runtime`] when the file cannot be read, and
+    /// [`Error::ValidationError`] when its content is invalid.
     pub fn from_dir(source: &Path) -> Result<Self, Error> {
         let manifest_path = source.join("manifest.json");
-        let content = match fs::read_to_string(&manifest_path) {
-            Ok(value) => value,
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to read {}: {error}",
-                    manifest_path.display()
-                )));
-            }
-        };
-        let parsed: Result<Manifest, serde_json::Error> =
-            serde_json::from_str(&content);
-        let manifest = match parsed {
-            Ok(value) => value,
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to parse {}: {error}",
-                    manifest_path.display()
-                )));
-            }
-        };
+        let bytes = read_manifest(&manifest_path)?;
+        reject_bom(&bytes)?;
+        let content = decode_utf8(&bytes)?;
+        let manifest = parse_manifest(content)?;
+        validate_manifest(&manifest)?;
         return Ok(manifest);
     }
+}
+
+/// Read the raw manifest bytes.
+fn read_manifest(path: &Path) -> Result<Vec<u8>, Error> {
+    let read = fs::read(path);
+    return match read {
+        Ok(value) => Ok(value),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to read {}: {error}",
+            path.display()
+        ))),
+    };
+}
+
+/// Reject a manifest that starts with a UTF-8 byte order mark.
+fn reject_bom(bytes: &[u8]) -> Result<(), Error> {
+    if bytes.starts_with(BOM.as_slice()) {
+        return Err(Error::ValidationError(String::from(
+            "Manifest must not contain a byte order mark (BOM)",
+        )));
+    }
+    return Ok(());
+}
+
+/// Decode the manifest bytes as UTF-8.
+fn decode_utf8(bytes: &[u8]) -> Result<&str, Error> {
+    let decoded = str::from_utf8(bytes);
+    return match decoded {
+        Ok(value) => Ok(value),
+        Err(_) => Err(Error::ValidationError(String::from(
+            "Manifest is not valid UTF-8",
+        ))),
+    };
+}
+
+/// Parse the decoded manifest text as JSON.
+fn parse_manifest(content: &str) -> Result<Manifest, Error> {
+    let parsed: Result<Manifest, serde_json::Error> =
+        serde_json::from_str(content);
+    return match parsed {
+        Ok(value) => Ok(value),
+        Err(error) => Err(Error::ValidationError(format!(
+            "Manifest is not valid JSON: {error}"
+        ))),
+    };
+}
+
+/// Validate the required manifest members.
+fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
+    if manifest.name.is_empty() {
+        return Err(Error::ValidationError(String::from(
+            "Manifest name must not be empty",
+        )));
+    }
+    let version = semver::Version::parse(&manifest.version);
+    match version {
+        Ok(_) => {}
+        Err(_) => {
+            return Err(Error::ValidationError(format!(
+                "Invalid SemVer version: {}",
+                manifest.version
+            )));
+        }
+    }
+    let entrypoint = validate_archive_entry(&manifest.entrypoint);
+    return match entrypoint {
+        Ok(()) => Ok(()),
+        Err(_) => Err(Error::ValidationError(format!(
+            "Invalid entrypoint path: {}",
+            manifest.entrypoint
+        ))),
+    };
 }
