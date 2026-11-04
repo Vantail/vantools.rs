@@ -36,13 +36,32 @@ impl Manifest {
     /// Returns [`Error::Runtime`] when the file cannot be read, and
     /// [`Error::ValidationError`] when its content is invalid.
     pub fn from_dir(source: &Path) -> Result<Self, Error> {
+        let loaded = Self::from_dir_with_bytes(source)?;
+        let (manifest, _) = loaded;
+        return Ok(manifest);
+    }
+
+    /// Reads and validates the `manifest.json` of a source directory and
+    /// returns it together with the exact bytes that were validated.
+    ///
+    /// Callers that copy the manifest into an archive should write these
+    /// bytes instead of reading the file again, so the archived manifest
+    /// is always the one that passed validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Runtime`] when the file cannot be read, and
+    /// [`Error::ValidationError`] when its content is invalid.
+    pub fn from_dir_with_bytes(
+        source: &Path,
+    ) -> Result<(Self, Vec<u8>), Error> {
         let manifest_path = source.join("manifest.json");
         let bytes = read_manifest(&manifest_path)?;
         reject_bom(&bytes)?;
         let content = decode_utf8(&bytes)?;
         let manifest = parse_manifest(content)?;
         validate_manifest(&manifest)?;
-        return Ok(manifest);
+        return Ok((manifest, bytes));
     }
 }
 
