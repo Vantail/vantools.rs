@@ -52,3 +52,21 @@ fn unknown_subcommand_reports_usage_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(UNKNOWN_MESSAGE));
 }
+
+#[cfg(unix)]
+#[test]
+fn non_unicode_argument_is_rejected_without_panicking() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let invalid: &OsStr = OsStr::from_bytes(&[0xff, 0xfe]);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_van"));
+    let launched = command.arg(invalid).output();
+    let output = match launched {
+        Ok(output) => output,
+        Err(error) => panic!("failed to run the van binary: {error}"),
+    };
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not valid Unicode"));
+}
