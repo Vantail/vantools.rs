@@ -28,7 +28,10 @@ const ARCHIVE_EXTENSION: &str = "van";
 /// The `pack` command.
 ///
 /// Reads a plugin source directory and writes a `<name>-<version>.van`
-/// archive into the target directory.
+/// archive into the target directory. An existing regular archive with
+/// the same name is overwritten; an existing symlink or other
+/// non-regular entry is refused so the archive cannot be redirected
+/// outside the target directory.
 #[non_exhaustive]
 pub struct PackCommand {
     /// The plugin source directory holding `manifest.json` and `dist/`.
@@ -59,15 +62,7 @@ impl Command for PackCommand {
         self.ensure_target()?;
         let manifest = Manifest::from_dir(&self.source)?;
         let archive_path = self.archive_path(&manifest);
-        let file = match File::create(&archive_path) {
-            Ok(value) => value,
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to create {}: {error}",
-                    archive_path.display()
-                )));
-            }
-        };
+        let file = create_archive_file(&archive_path)?;
         let mut writer = ZipWriter::new(file);
         let options = default_file_options();
         add_manifest(&mut writer, &manifest_path, options)?;
@@ -158,6 +153,43 @@ fn notice(message: &str) -> Result<(), Error> {
         Err(error) => {
             Err(Error::Runtime(format!("failed to write output: {error}")))
         }
+    };
+}
+
+/// Create the archive file without following a symlink.
+///
+/// A missing path is created, and an existing regular file is
+/// truncated so that re-packing replaces the previous archive. Any
+/// other existing entry, such as a symlink or a directory, is rejected
+/// so a planted link cannot redirect the archive outside the target
+/// directory.
+fn create_archive_file(path: &Path) -> Result<File, Error> {
+    let metadata = fs::symlink_metadata(path);
+    match metadata {
+        Ok(value) => {
+            if !value.file_type().is_file() {
+                return Err(Error::ValidationError(format!(
+                    "Refusing to overwrite a symlink or non-regular file: {}",
+                    path.display()
+                )));
+            }
+        }
+        Err(error) => {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(Error::Runtime(format!(
+                    "failed to inspect {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    let created = File::create(path);
+    return match created {
+        Ok(value) => Ok(value),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to create {}: {error}",
+            path.display()
+        ))),
     };
 }
 

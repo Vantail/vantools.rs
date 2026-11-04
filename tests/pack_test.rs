@@ -82,6 +82,78 @@ fn pack_rejects_symlinks() {
     assert!(!target.join(BAD_ARCHIVE).exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn pack_refuses_to_overwrite_symlinked_archive() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let target = root.path().join("target");
+    create_dir(&target);
+    let victim = root.path().join("victim.txt");
+    write_file(&victim, "keep me\n");
+    let archive = target.join(BAD_ARCHIVE);
+    let linked = symlink(&victim, &archive);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let error = pack_error(&source, &target);
+    let expected = format!(
+        "Refusing to overwrite a symlink or non-regular file: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+    let content = fs::read(&victim);
+    let kept = match content {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read the victim file: {error}"),
+    };
+    assert_eq!(kept.as_slice(), b"keep me\n".as_slice());
+}
+
+#[test]
+fn pack_refuses_to_overwrite_directory_at_archive_path() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let target = root.path().join("target");
+    create_dir(&target);
+    let archive = target.join(BAD_ARCHIVE);
+    create_dir(&archive);
+    let error = pack_error(&source, &target);
+    let expected = format!(
+        "Refusing to overwrite a symlink or non-regular file: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn pack_overwrites_existing_regular_archive() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let target = root.path().join("target");
+    create_dir(&target);
+    let archive = target.join(BAD_ARCHIVE);
+    write_file(&archive, "stale\n");
+    let command = PackCommand::new(source, target);
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    let content = fs::read(&archive);
+    let written = match content {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read the archive: {error}"),
+    };
+    assert!(written.starts_with(b"PK".as_slice()));
+}
+
 #[test]
 fn validate_archive_entry_rejects_backslashes() {
     let error = entry_error("dist\\app.ts");
