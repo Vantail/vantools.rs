@@ -9,6 +9,19 @@ const HELP_MARKER: &str = "Usage: van";
 /// Expected message for an unknown subcommand.
 const UNKNOWN_MESSAGE: &str = "error: unknown subcommand 'foo'";
 
+/// Expected message for a `pack` invocation without source and target.
+const MISSING_ARGS_MESSAGE: &str =
+    "error: Missing required arguments. Run 'van pack --help' for usage.";
+
+/// Create a temporary directory for one test.
+fn temp_root() -> tempfile::TempDir {
+    let created = tempfile::tempdir();
+    return match created {
+        Ok(value) => value,
+        Err(error) => panic!("failed to create a temporary directory: {error}"),
+    };
+}
+
 /// Run the compiled `van` binary with the given arguments.
 fn run(arguments: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_van"));
@@ -90,6 +103,81 @@ fn unknown_subcommand_bounds_echoed_length() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(&"a".repeat(64)));
     assert!(!stderr.contains(&"a".repeat(65)));
+}
+
+#[test]
+fn pack_help_prints_usage_and_exits_zero() {
+    let long = run(&["pack", "--help"]);
+    assert_eq!(long.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&long.stdout);
+    assert!(stdout.contains("Usage: pack -s <source> -t <target>"));
+    assert!(stdout.contains("--source"));
+    let short = run(&["pack", "-h"]);
+    assert_eq!(short.status.code(), Some(0));
+    let short_stdout = String::from_utf8_lossy(&short.stdout);
+    assert_eq!(short_stdout, stdout);
+}
+
+#[test]
+fn pack_version_prints_name_and_version() {
+    let output = run(&["pack", "-v"]);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected: String = format!("van {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(stdout, expected);
+    let long = run(&["pack", "--version"]);
+    assert_eq!(long.status.code(), Some(0));
+    let long_stdout = String::from_utf8_lossy(&long.stdout);
+    assert_eq!(long_stdout, expected);
+}
+
+#[test]
+fn pack_unknown_argument_reports_cli_error() {
+    let output = run(&["pack", "--bogus"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(
+        "Unknown argument: --bogus. Run 'van pack --help' for usage."
+    ));
+}
+
+#[test]
+fn pack_missing_arguments_reports_cli_error() {
+    let output = run(&["pack", "--source", "examples/test-plugin"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(MISSING_ARGS_MESSAGE));
+}
+
+#[test]
+fn pack_accepts_long_flags() {
+    let target = temp_root();
+    let target_path = match target.path().to_str() {
+        Some(value) => value,
+        None => panic!("temporary directory path is not valid Unicode"),
+    };
+    let output = run(&[
+        "pack",
+        "--source",
+        "examples/test-plugin",
+        "--target",
+        target_path,
+    ]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(target.path().join("test-plugin-0.1.0.van").is_file());
+}
+
+#[test]
+fn pack_accepts_short_flags() {
+    let target = temp_root();
+    let target_path = match target.path().to_str() {
+        Some(value) => value,
+        None => panic!("temporary directory path is not valid Unicode"),
+    };
+    let output =
+        run(&["pack", "-s", "examples/test-plugin", "-t", target_path]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(target.path().join("test-plugin-0.1.0.van").is_file());
 }
 
 #[cfg(unix)]

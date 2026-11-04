@@ -37,3 +37,18 @@ pub fn to_exit_code(code: i32) -> u8 {
         Err(_) => FALLBACK_EXIT_CODE,
     };
 }
+
+/// Metadata and behavior shared by every CLI command.
+///
+/// Implementors describe themselves so the entry point can print help
+/// and usage text without duplicating the wording.
+pub trait CliCommand {
+    /// The name of the command, for example `pack`.
+    fn name(&self) -> &'static str;
+
+    /// The usage line of the command, without a trailing newline.
+    fn usage(&self) -> &'static str;
+
+    /// The full help text of the command, without a trailing newline.
+    fn help(&self) -> &'static str;
+}

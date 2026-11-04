@@ -28,6 +28,8 @@ pub enum Error {
     Runtime(String),
     /// An archive path or file type failed validation.
     ValidationError(String),
+    /// The arguments of a subcommand are invalid.
+    CliError(String),
 }
 
 impl VanError for Error {
@@ -36,6 +38,7 @@ impl VanError for Error {
             Error::Usage(_) => 2,
             Error::Runtime(_) => 1,
             Error::ValidationError(_) => 1,
+            Error::CliError(_) => 1,
         };
     }
 }
@@ -50,6 +53,9 @@ impl fmt::Display for Error {
                 return write!(formatter, "error: {message}");
             }
             Error::ValidationError(message) => {
+                return write!(formatter, "error: {message}");
+            }
+            Error::CliError(message) => {
                 return write!(formatter, "error: {message}");
             }
         }

@@ -11,6 +11,7 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::common::Error;
+use crate::common::cli::CliCommand;
 use crate::common::command::Command;
 use crate::common::manifest::Manifest;
 use crate::common::validation::{
@@ -117,6 +118,20 @@ impl PackCommand {
                 self.target.display()
             ))),
         };
+    }
+}
+
+impl CliCommand for PackCommand {
+    fn name(&self) -> &'static str {
+        return "pack";
+    }
+
+    fn usage(&self) -> &'static str {
+        return "pack -s <source> -t <target>";
+    }
+
+    fn help(&self) -> &'static str {
+        return "Usage: pack -s <source> -t <target>\n\nOptions:\n  -s, --source <path>  The source directory containing manifest.json and dist/\n  -t, --target <path>  The target directory to place the .van archive\n  -h, --help           Print this help message\n  -v, --version        Print version information";
     }
 }
 
