@@ -1,7 +1,8 @@
 //! Manifest handling for `.van` plugin archives.
 
 use serde::Deserialize;
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::str;
 
@@ -10,6 +11,9 @@ use crate::common::validation::validate_archive_entry;
 
 /// Byte order mark that a manifest must not start with.
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
+/// Largest `manifest.json` this crate reads, in bytes.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
 /// The parsed and validated `manifest.json` from a plugin directory.
 #[derive(Deserialize)]
@@ -34,7 +38,8 @@ impl Manifest {
     /// # Errors
     ///
     /// Returns [`Error::Runtime`] when the file cannot be read, and
-    /// [`Error::ValidationError`] when its content is invalid.
+    /// [`Error::ValidationError`] when the file is larger than 1 MiB or
+    /// its content is invalid.
     pub fn from_dir(source: &Path) -> Result<Self, Error> {
         let loaded = Self::from_dir_with_bytes(source)?;
         let (manifest, _) = loaded;
@@ -51,7 +56,8 @@ impl Manifest {
     /// # Errors
     ///
     /// Returns [`Error::Runtime`] when the file cannot be read, and
-    /// [`Error::ValidationError`] when its content is invalid.
+    /// [`Error::ValidationError`] when the file is larger than 1 MiB or
+    /// its content is invalid.
     pub fn from_dir_with_bytes(
         source: &Path,
     ) -> Result<(Self, Vec<u8>), Error> {
@@ -66,15 +72,39 @@ impl Manifest {
 }
 
 /// Read the raw manifest bytes.
+///
+/// At most 1 MiB is read, so an oversized manifest is rejected instead of
+/// being loaded into memory in full.
 fn read_manifest(path: &Path) -> Result<Vec<u8>, Error> {
-    let read = fs::read(path);
-    return match read {
-        Ok(value) => Ok(value),
-        Err(error) => Err(Error::Runtime(format!(
-            "failed to read {}: {error}",
-            path.display()
-        ))),
+    let opened = File::open(path);
+    let file = match opened {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read {}: {error}",
+                path.display()
+            )));
+        }
     };
+    let mut limited = file.take(MAX_MANIFEST_BYTES + 1);
+    let mut bytes: Vec<u8> = Vec::new();
+    let read = limited.read_to_end(&mut bytes);
+    match read {
+        Ok(_) => {}
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read {}: {error}",
+                path.display()
+            )));
+        }
+    }
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(Error::ValidationError(format!(
+            "Manifest is larger than 1 MiB: {}",
+            path.display()
+        )));
+    }
+    return Ok(bytes);
 }
 
 /// Reject a manifest that starts with a UTF-8 byte order mark.

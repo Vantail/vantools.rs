@@ -109,6 +109,17 @@ fn invalid_utf8_is_rejected() {
 }
 
 #[test]
+fn oversized_manifest_is_rejected() {
+    let root = temp_root();
+    let mut content: Vec<u8> = Vec::new();
+    content.extend_from_slice(VALID_MANIFEST.as_bytes());
+    content.extend_from_slice(vec![0x20; 1024 * 1024].as_slice());
+    write_file(&root.path().join("manifest.json"), &content);
+    let message = manifest_message(root.path());
+    assert!(message.starts_with("Manifest is larger than 1 MiB: "));
+}
+
+#[test]
 fn pack_does_not_create_archive_for_invalid_manifest() {
     let root = temp_root();
     let source = root.path().join("plugin");

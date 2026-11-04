@@ -26,6 +26,9 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// Extension of the archives this command produces.
 const ARCHIVE_EXTENSION: &str = "van";
 
+/// Size of the buffer used to copy one source file into the archive.
+const COPY_BUFFER_BYTES: usize = 8 * 1024;
+
 /// The `pack` command.
 ///
 /// Reads a plugin source directory and writes a `<name>-<version>.van`
@@ -204,6 +207,21 @@ fn add_manifest(
     return add_file(writer, MANIFEST_FILE_NAME, manifest_bytes, options);
 }
 
+/// Start one archive entry under `archive_name`.
+fn start_entry(
+    writer: &mut ZipWriter<File>,
+    archive_name: &str,
+    options: SimpleFileOptions,
+) -> Result<(), Error> {
+    let started = writer.start_file(archive_name, options);
+    return match started {
+        Ok(()) => Ok(()),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to add {archive_name}: {error}"
+        ))),
+    };
+}
+
 /// Add `content` to the archive under `archive_name`.
 fn add_file(
     writer: &mut ZipWriter<File>,
@@ -211,15 +229,7 @@ fn add_file(
     content: &[u8],
     options: SimpleFileOptions,
 ) -> Result<(), Error> {
-    let started = writer.start_file(archive_name, options);
-    match started {
-        Ok(()) => {}
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to add {archive_name}: {error}"
-            )));
-        }
-    }
+    start_entry(writer, archive_name, options)?;
     let written = writer.write_all(content);
     return match written {
         Ok(()) => Ok(()),
@@ -245,9 +255,10 @@ fn write_entries(
 ///
 /// The file is inspected with [`fs::symlink_metadata`] immediately before
 /// it is opened, and the opened handle is checked again through
-/// [`File::metadata`]; the content is then read from that same handle. A
-/// path swapped for a symlink or another file after the collection step
-/// is therefore rejected instead of contributing content from elsewhere.
+/// [`File::metadata`]; the content is then streamed from that same handle
+/// in fixed-size chunks. A path swapped for a symlink or another file
+/// after the collection step is rejected instead of contributing content
+/// from elsewhere, except within the check-then-open window.
 fn add_source_file(
     writer: &mut ZipWriter<File>,
     entry: &ArchiveEntry,
@@ -280,15 +291,52 @@ fn add_source_file(
             entry_path.display()
         )));
     }
-    let mut content: Vec<u8> = Vec::new();
-    let read = file.read_to_end(&mut content);
-    return match read {
-        Ok(_) => add_file(writer, &entry.archive_name, &content, options),
-        Err(error) => Err(Error::Runtime(format!(
-            "failed to read {}: {error}",
-            entry_path.display()
-        ))),
-    };
+    start_entry(writer, &entry.archive_name, options)?;
+    return copy_stream(writer, &mut file, &entry.archive_name, entry_path);
+}
+
+/// Copy `reader` into the current archive entry in fixed-size chunks.
+///
+/// The content is never held in memory as a whole, so a large source
+/// file cannot exhaust memory while it is packed.
+fn copy_stream(
+    writer: &mut ZipWriter<File>,
+    reader: &mut File,
+    archive_name: &str,
+    source_path: &Path,
+) -> Result<(), Error> {
+    let mut buffer = [0u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = reader.read(&mut buffer);
+        let count = match read {
+            Ok(0) => return Ok(()),
+            Ok(value) => value,
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to read {}: {error}",
+                    source_path.display()
+                )));
+            }
+        };
+        let chunk = match buffer.get(..count) {
+            Some(value) => value,
+            None => {
+                return Err(Error::Runtime(format!(
+                    "failed to copy {}: chunk exceeds the buffer",
+                    source_path.display()
+                )));
+            }
+        };
+        let written = writer.write_all(chunk);
+        match written {
+            Ok(()) => {}
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to write {archive_name}: {error}"
+                )));
+            }
+        }
+    }
 }
 
 /// Validate and collect every file below `directory` under `prefix`.
