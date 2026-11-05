@@ -37,7 +37,9 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// archive into the target directory. An existing archive with the same
 /// name is overwritten after a warning is printed to stderr; an existing
 /// symlink or other non-regular entry is refused so the archive cannot
-/// be redirected outside the target directory.
+/// be redirected outside the target directory. A successful run then
+/// reports the archive path, the files written, and the source files
+/// the layout excluded.
 ///
 /// The archive layout follows Section 4 of `docs/SPEC.md`: the
 /// validated `manifest.json` sits at the archive root and only the
@@ -73,6 +75,8 @@ impl Command for PackCommand {
         require_entrypoint(&dist_path, &manifest.entrypoint)?;
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
+        let mut ignored: Vec<PathBuf> = Vec::new();
+        collect_ignored(&self.source, &mut ignored)?;
         self.ensure_target()?;
         let archive_path = self.archive_path(&manifest);
         warn_if_overwriting(&archive_path)?;
@@ -82,13 +86,18 @@ impl Command for PackCommand {
         add_manifest(&mut writer, &manifest_bytes, options)?;
         write_entries(&mut writer, &entries, options)?;
         let finished = writer.finish();
-        return match finished {
-            Ok(_) => Ok(()),
-            Err(error) => Err(Error::Runtime(format!(
-                "failed to finish {}: {error}",
-                escape_path(&archive_path)
-            ))),
-        };
+        match finished {
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to finish {}: {error}",
+                    escape_path(&archive_path)
+                )));
+            }
+        }
+        ignored.sort();
+        let files_written = entries.len() + 1;
+        return report_success(&archive_path, files_written, &ignored);
     }
 }
 
@@ -242,6 +251,144 @@ fn warn(message: &str) -> Result<(), Error> {
             Err(Error::Runtime(format!("failed to write warning: {error}")))
         }
     };
+}
+
+/// Print the summary of a completed pack to stdout.
+///
+/// The summary names the archive, counts the files written, and lists
+/// the source files the layout excluded. Every interpolated path is
+/// escaped like any other diagnostic.
+fn report_success(
+    archive_path: &Path,
+    files_written: usize,
+    ignored: &[PathBuf],
+) -> Result<(), Error> {
+    let mut message = format!(
+        "Successfully created archive: {}\nFiles written: {}",
+        escape_path(archive_path),
+        files_written
+    );
+    let ignored_count = ignored.len();
+    message.push_str(&format!("\nFiles ignored: {ignored_count}"));
+    if !ignored.is_empty() {
+        message.push_str("\nIgnored paths:");
+        for relative in ignored {
+            let rendered = escape_path(relative);
+            message.push_str(&format!("\n  - {rendered}"));
+        }
+    }
+    return notice(&message);
+}
+
+/// A directory the ignored-file scan still has to read.
+struct PendingScan {
+    /// Path of the directory on disk.
+    path: PathBuf,
+    /// Directory relative to the source root, used in the report.
+    relative: PathBuf,
+}
+
+/// Collect the files of `source` that the archive layout excludes.
+///
+/// The manifest at the source root and everything below `dist/` belong
+/// to the archive, so every other file is reported to the user. The
+/// pending directories stay in a `Vec` on the heap, mirroring
+/// `collect_entries`, and symlinked directories are never followed.
+fn collect_ignored(
+    source: &Path,
+    ignored: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    let mut pending: Vec<PendingScan> = Vec::new();
+    pending.push(PendingScan {
+        path: source.to_path_buf(),
+        relative: PathBuf::new(),
+    });
+    loop {
+        let next = pending.pop();
+        let current = match next {
+            None => break,
+            Some(value) => value,
+        };
+        scan_directory(&current, &mut pending, ignored)?;
+    }
+    return Ok(());
+}
+
+/// Read one directory of the ignored-file scan.
+fn scan_directory(
+    current: &PendingScan,
+    pending: &mut Vec<PendingScan>,
+    ignored: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    let read = match fs::read_dir(&current.path) {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read directory {}: {error}",
+                escape_path(&current.path)
+            )));
+        }
+    };
+    let mut read = read;
+    loop {
+        let next = read.next();
+        let entry = match next {
+            None => break,
+            Some(Ok(value)) => value,
+            Some(Err(error)) => {
+                return Err(Error::Runtime(format!(
+                    "failed to read an entry of {}: {error}",
+                    escape_path(&current.path)
+                )));
+            }
+        };
+        scan_entry(&entry, current, pending, ignored)?;
+    }
+    return Ok(());
+}
+
+/// Classify one entry of the ignored-file scan.
+fn scan_entry(
+    entry: &fs::DirEntry,
+    current: &PendingScan,
+    pending: &mut Vec<PendingScan>,
+    ignored: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    let entry_path = entry.path();
+    let file_name = match entry.file_name().into_string() {
+        Ok(value) => value,
+        Err(_) => {
+            return Err(Error::Runtime(format!(
+                "file name is not valid Unicode: {}",
+                escape_path(&entry_path)
+            )));
+        }
+    };
+    let relative = current.relative.join(&file_name);
+    let file_type = match entry.file_type() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(&entry_path)
+            )));
+        }
+    };
+    if file_type.is_dir() {
+        if relative.as_path() == Path::new(DIST_DIRECTORY_NAME) {
+            return Ok(());
+        }
+        pending.push(PendingScan {
+            path: entry_path,
+            relative,
+        });
+        return Ok(());
+    }
+    if relative.as_path() == Path::new(MANIFEST_FILE_NAME) {
+        return Ok(());
+    }
+    ignored.push(relative);
+    return Ok(());
 }
 
 /// Create the archive file without following a symlink.
