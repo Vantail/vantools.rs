@@ -3,7 +3,6 @@
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::path::PathBuf;
 
 use tempfile::TempDir;
 use tempfile::tempdir;
@@ -128,7 +127,8 @@ fn pack_creates_van_archive() {
         Ok(value) => value,
         Err(error) => panic!("failed to create a temporary directory: {error}"),
     };
-    let source = PathBuf::from("examples/test-plugin");
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/test-plugin");
     let command = PackCommand::new(source, target_dir.path().to_path_buf());
     let result = command.run();
     match result {
