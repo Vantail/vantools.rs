@@ -121,6 +121,10 @@ It rejects:
 - archive entry names that are not relative, use backslashes, contain
   empty, `.`, or `..` segments, or are not in Unicode NFC.
 
+Untrusted values echoed in diagnostics are rendered as a single line:
+control characters are escaped, and argument and manifest values are
+truncated after 64 characters.
+
 The archive contains `manifest.json` at its root and the contents of
 `dist/` under the `dist/` prefix, compressed with deflate. The manifest
 bytes written to the archive are the exact bytes that passed validation.
@@ -169,26 +173,30 @@ by `rustfmt.toml`.
 
 ## Project layout
 
-| Path                        | Contents                                        |
-| --------------------------- | ----------------------------------------------- |
-| `src/main.rs`               | Binary entry point; routes subcommands and maps errors to exit codes |
-| `src/lib.rs`                | Library root exposing the modules               |
-| `src/van.rs`                | Top-level argument parsing and help/version output |
-| `src/pack.rs`               | `pack` command implementation                   |
-| `src/common/cli.rs`         | Argument collection, error reporting, and exit codes |
-| `src/common/manifest.rs`    | Manifest parsing and validation                 |
-| `src/common/validation.rs`  | Path validation and safe diagnostic rendering   |
-| `src/common/walk.rs`        | Iterative directory traversal                   |
-| `src/common/output.rs`      | Terminal output helpers                         |
-| `src/common/error.rs`       | Unified error type                              |
-| `src/common/command.rs`     | `Command` trait                                 |
-| `tests/cli.rs`              | Integration tests for the compiled binary       |
-| `tests/pack_test.rs`        | Tests for packing and path validation           |
-| `tests/manifest_test.rs`    | Tests for manifest validation                   |
-| `examples/test-plugin/`     | Sample plugin source used by the tests          |
-| `docs/SPEC.md`              | `.van` archive and manifest format              |
-| `docs/`                     | Rust, design, and Git guidelines                |
-| `.github/workflows/ci.yml`  | Test and lint workflow                          |
+| Path                       | Contents                                                             |
+| -------------------------- | -------------------------------------------------------------------- |
+| `src/main.rs`              | Binary entry point; routes subcommands and maps errors to exit codes |
+| `src/lib.rs`               | Library root exposing the modules                                    |
+| `src/van.rs`               | Top-level argument parsing and help/version output                   |
+| `src/pack/mod.rs`          | `pack` command and its source validation                             |
+| `src/pack/cli.rs`          | `pack` argument parsing and dispatch                                 |
+| `src/pack/writer.rs`       | ZIP writing and atomic archive replacement                           |
+| `src/common/cli.rs`        | Argument collection, error reporting, exit codes, `CliCommand`       |
+| `src/common/manifest.rs`   | Manifest parsing and validation                                      |
+| `src/common/validation.rs` | Path validation and safe diagnostic rendering                        |
+| `src/common/walk.rs`       | Iterative directory traversal                                        |
+| `src/common/output.rs`     | Terminal output helpers                                              |
+| `src/common/error.rs`      | Unified error type                                                   |
+| `src/common/command.rs`    | `Command` trait                                                      |
+| `tests/cli.rs`             | Integration tests for the compiled binary                            |
+| `tests/pack_test.rs`       | Tests for packing and path validation                                |
+| `tests/manifest_test.rs`   | Tests for manifest validation                                        |
+| `tests/van_tests.rs`       | Tests for unknown-subcommand diagnostics                             |
+| `tests/main_tests.rs`      | Tests for error reporting and exit-code mapping                      |
+| `examples/test-plugin/`    | Sample plugin source used by the tests                               |
+| `docs/SPEC.md`             | `.van` archive and manifest format                                   |
+| `docs/`                    | Rust, design, and Git guidelines                                     |
+| `.github/workflows/ci.yml` | Test and lint workflow                                               |
 
 ## Documentation
 
