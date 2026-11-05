@@ -234,6 +234,56 @@ fn pack_refuses_to_overwrite_symlinked_archive() {
     assert_eq!(kept.as_slice(), b"keep me\n".as_slice());
 }
 
+#[cfg(unix)]
+#[test]
+fn pack_refuses_symlinked_target_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let destination = root.path().join("destination");
+    create_dir(&destination);
+    let target = root.path().join("target");
+    let linked = symlink(&destination, &target);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let error = pack_error(&source, &target);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        target.display()
+    );
+    assert_validation_message(error, &expected);
+    // The archive must not be written through the link.
+    assert!(!destination.join(BAD_ARCHIVE).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn pack_refuses_symlinked_source_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let link_source = root.path().join("linked-plugin");
+    let linked = symlink(&source, &link_source);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let target = root.path().join("target");
+    let error = pack_error(&link_source, &target);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        link_source.display()
+    );
+    assert_validation_message(error, &expected);
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
 #[test]
 fn pack_refuses_to_overwrite_directory_at_archive_path() {
     let root = temp_root();
