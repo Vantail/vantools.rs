@@ -45,6 +45,11 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// reports the archive path, the files written, and the source files
 /// the layout excluded.
 ///
+/// The source and target directories themselves are inspected without
+/// following links, so a symlinked directory is refused rather than
+/// resolved, matching the no-symlink policy applied to every other path
+/// the command touches.
+///
 /// The archive layout follows Section 4 of `docs/SPEC.md`: the
 /// validated `manifest.json` sits at the archive root and only the
 /// contents of `dist/` are added, each under the `dist/` prefix. Other
@@ -104,7 +109,12 @@ impl PackCommand {
     }
 
     /// Create the target directory when it does not exist yet.
+    ///
+    /// A symlink at the target path is refused instead of followed, so
+    /// the archive cannot land in a directory other than the one the
+    /// command named.
     fn ensure_target(&self) -> Result<(), Error> {
+        refuse_symlink(&self.target)?;
         if self.target.is_dir() {
             return Ok(());
         }
@@ -203,7 +213,12 @@ fn default_file_options() -> SimpleFileOptions {
 }
 
 /// Return an error unless `path` is an existing directory.
+///
+/// A symlink at the path is refused instead of followed, so the source
+/// directory obeys the same no-symlink policy as its `manifest.json`,
+/// `dist/`, and the archive path.
 fn require_directory(path: &Path, description: &str) -> Result<(), Error> {
+    refuse_symlink(path)?;
     if path.is_dir() {
         return Ok(());
     }
@@ -211,6 +226,42 @@ fn require_directory(path: &Path, description: &str) -> Result<(), Error> {
         "{description} not found: {}",
         escape_path(path)
     )));
+}
+
+/// Refuse `path` when it is a symbolic link instead of following it.
+///
+/// The path is inspected with [`fs::symlink_metadata`], so a symlink is
+/// seen as a link whether or not its own target exists. A missing path
+/// passes through, because each caller reports a missing path in its
+/// own way. This mirrors the refusal [`refuse_non_regular_archive`]
+/// applies to the archive destination.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symlink and
+/// [`Error::Runtime`] when the path cannot be inspected.
+fn refuse_symlink(path: &Path) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path);
+    match metadata {
+        Ok(value) => {
+            if value.file_type().is_symlink() {
+                return Err(Error::ValidationError(format!(
+                    "Symlinks or non-regular files are not allowed: {}",
+                    escape_path(path)
+                )));
+            }
+            return Ok(());
+        }
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    }
 }
 
 /// Return an error unless `<source>/dist` is an existing directory.
