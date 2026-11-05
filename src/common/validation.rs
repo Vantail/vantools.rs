@@ -66,6 +66,24 @@ pub fn validate_archive_entry(path_str: &str) -> Result<(), Error> {
 /// [`Error::ValidationError`] for symbolic links and any other
 /// non-regular file.
 pub fn validate_file_type(path: &Path) -> Result<(), Error> {
+    let validated = validated_metadata(path);
+    return match validated {
+        Ok(_) => Ok(()),
+        Err(error) => Err(error),
+    };
+}
+
+/// Validates that `path` is a regular file or a directory and returns
+/// the metadata the decision was based on.
+///
+/// The metadata is the identity snapshot of the validated file, so a
+/// caller that opens the path afterwards can compare the opened handle
+/// against it and detect a swap between the two steps.
+///
+/// # Errors
+///
+/// Returns the same errors as [`validate_file_type`].
+pub fn validated_metadata(path: &Path) -> Result<fs::Metadata, Error> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
         Err(error) => {
@@ -77,7 +95,7 @@ pub fn validate_file_type(path: &Path) -> Result<(), Error> {
     };
     let file_type = metadata.file_type();
     if file_type.is_file() || file_type.is_dir() {
-        return Ok(());
+        return Ok(metadata);
     }
     return Err(symlink_error(path));
 }
