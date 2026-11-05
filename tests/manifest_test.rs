@@ -65,6 +65,16 @@ fn invalid_entrypoint_is_rejected() {
 }
 
 #[test]
+fn control_characters_in_entrypoint_are_rendered_as_escapes() {
+    let root = temp_root();
+    let content = "{\"name\":\"example-plugin\",\"version\":\"1.2.3\",\
+\"entrypoint\":\"../\\u001b[2Japp.ts\"}";
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let message = manifest_message(root.path());
+    assert_eq!(message, "Invalid entrypoint path: ../\\u{1b}[2Japp.ts");
+}
+
+#[test]
 fn name_with_parent_segment_is_rejected() {
     let message = name_message("../evil");
     assert_eq!(message, "Invalid manifest name: ../evil");

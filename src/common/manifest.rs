@@ -7,7 +7,9 @@ use std::path::Path;
 use std::str;
 
 use crate::common::Error;
-use crate::common::validation::validate_archive_entry;
+use crate::common::validation::{
+    escape_path, escape_text, validate_archive_entry,
+};
 
 /// Byte order mark that a manifest must not start with.
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -82,7 +84,7 @@ fn read_manifest(path: &Path) -> Result<Vec<u8>, Error> {
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to read {}: {error}",
-                path.display()
+                escape_path(path)
             )));
         }
     };
@@ -94,14 +96,14 @@ fn read_manifest(path: &Path) -> Result<Vec<u8>, Error> {
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to read {}: {error}",
-                path.display()
+                escape_path(path)
             )));
         }
     }
     if bytes.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(Error::ValidationError(format!(
             "Manifest is larger than 1 MiB: {}",
-            path.display()
+            escape_path(path)
         )));
     }
     return Ok(bytes);
@@ -149,7 +151,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
         Err(_) => {
             return Err(Error::ValidationError(format!(
                 "Invalid SemVer version: {}",
-                manifest.version
+                escape_text(&manifest.version)
             )));
         }
     }
@@ -158,7 +160,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::ValidationError(format!(
             "Invalid entrypoint path: {}",
-            manifest.entrypoint
+            escape_text(&manifest.entrypoint)
         ))),
     };
 }
@@ -192,5 +194,8 @@ fn validate_name(name: &str) -> Result<(), Error> {
 
 /// Build the error for a name that cannot be used as a file name.
 fn invalid_name(name: &str) -> Error {
-    return Error::ValidationError(format!("Invalid manifest name: {name}"));
+    return Error::ValidationError(format!(
+        "Invalid manifest name: {}",
+        escape_text(name)
+    ));
 }

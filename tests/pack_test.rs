@@ -158,6 +158,28 @@ fn pack_rejects_node_modules_at_any_depth() {
 
 #[cfg(unix)]
 #[test]
+fn pack_escapes_control_characters_in_source_file_names() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let evil = source.join("dist").join("a\\b\u{1b}.ts");
+    write_file(&evil, "// evil\n");
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    let message = match error {
+        Error::ValidationError(value) => value,
+        other => panic!("unexpected error: {other}"),
+    };
+    // The control character must be rendered as an escape, never emitted
+    // raw, while printable characters such as the backslash stay as is.
+    assert!(!message.contains('\u{1b}'));
+    assert!(message.contains("\\u{1b}"));
+    assert!(message.contains("a\\b"));
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn pack_rejects_symlinks() {
     use std::os::unix::fs::symlink;
 

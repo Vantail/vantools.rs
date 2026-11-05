@@ -15,7 +15,8 @@ use crate::common::cli::CliCommand;
 use crate::common::command::Command;
 use crate::common::manifest::Manifest;
 use crate::common::validation::{
-    validate_archive_entry, validate_file_type, validate_no_node_modules,
+    escape_path, escape_text, validate_archive_entry, validate_file_type,
+    validate_no_node_modules,
 };
 
 /// Name of the manifest file expected at the source root.
@@ -84,7 +85,7 @@ impl Command for PackCommand {
             Ok(_) => Ok(()),
             Err(error) => Err(Error::Runtime(format!(
                 "failed to finish {}: {error}",
-                archive_path.display()
+                escape_path(&archive_path)
             ))),
         };
     }
@@ -121,7 +122,7 @@ impl PackCommand {
             )),
             Err(error) => Err(Error::Runtime(format!(
                 "failed to create target directory {}: {error}",
-                self.target.display()
+                escape_path(&self.target)
             ))),
         };
     }
@@ -154,7 +155,7 @@ fn require_directory(path: &Path, description: &str) -> Result<(), Error> {
     }
     return Err(Error::Runtime(format!(
         "{description} not found: {}",
-        path.display()
+        escape_path(path)
     )));
 }
 
@@ -172,7 +173,7 @@ fn require_dist_directory(
     }
     return Err(Error::ValidationError(format!(
         "Missing 'dist' directory in source: {}",
-        source.display()
+        escape_path(source)
     )));
 }
 
@@ -188,7 +189,7 @@ fn require_entrypoint(dist_path: &Path, entrypoint: &str) -> Result<(), Error> {
     }
     return Err(Error::ValidationError(format!(
         "Entrypoint file not found in dist: {}",
-        entrypoint_path.display()
+        escape_path(&entrypoint_path)
     )));
 }
 
@@ -199,7 +200,7 @@ fn require_file(path: &Path, description: &str) -> Result<(), Error> {
     }
     return Err(Error::Runtime(format!(
         "{description} not found: {}",
-        path.display()
+        escape_path(path)
     )));
 }
 
@@ -230,7 +231,7 @@ fn create_archive_file(path: &Path) -> Result<File, Error> {
             if !value.file_type().is_file() {
                 return Err(Error::ValidationError(format!(
                     "Refusing to overwrite a symlink or non-regular file: {}",
-                    path.display()
+                    escape_path(path)
                 )));
             }
         }
@@ -238,7 +239,7 @@ fn create_archive_file(path: &Path) -> Result<File, Error> {
             if error.kind() != io::ErrorKind::NotFound {
                 return Err(Error::Runtime(format!(
                     "failed to inspect {}: {error}",
-                    path.display()
+                    escape_path(path)
                 )));
             }
         }
@@ -248,7 +249,7 @@ fn create_archive_file(path: &Path) -> Result<File, Error> {
         Ok(value) => Ok(value),
         Err(error) => Err(Error::Runtime(format!(
             "failed to create {}: {error}",
-            path.display()
+            escape_path(path)
         ))),
     };
 }
@@ -272,7 +273,8 @@ fn start_entry(
     return match started {
         Ok(()) => Ok(()),
         Err(error) => Err(Error::Runtime(format!(
-            "failed to add {archive_name}: {error}"
+            "failed to add {}: {error}",
+            escape_text(archive_name)
         ))),
     };
 }
@@ -289,7 +291,8 @@ fn add_file(
     return match written {
         Ok(()) => Ok(()),
         Err(error) => Err(Error::Runtime(format!(
-            "failed to write {archive_name}: {error}"
+            "failed to write {}: {error}",
+            escape_text(archive_name)
         ))),
     };
 }
@@ -327,7 +330,7 @@ fn add_source_file(
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to read {}: {error}",
-                entry_path.display()
+                escape_path(entry_path)
             )));
         }
     };
@@ -336,14 +339,14 @@ fn add_source_file(
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",
-                entry_path.display()
+                escape_path(entry_path)
             )));
         }
     };
     if !metadata.file_type().is_file() {
         return Err(Error::ValidationError(format!(
             "Symlinks or non-regular files are not allowed: {}",
-            entry_path.display()
+            escape_path(entry_path)
         )));
     }
     start_entry(writer, &entry.archive_name, options)?;
@@ -369,7 +372,7 @@ fn copy_stream(
             Err(error) => {
                 return Err(Error::Runtime(format!(
                     "failed to read {}: {error}",
-                    source_path.display()
+                    escape_path(source_path)
                 )));
             }
         };
@@ -378,7 +381,7 @@ fn copy_stream(
             None => {
                 return Err(Error::Runtime(format!(
                     "failed to copy {}: chunk exceeds the buffer",
-                    source_path.display()
+                    escape_path(source_path)
                 )));
             }
         };
@@ -387,7 +390,8 @@ fn copy_stream(
             Ok(()) => {}
             Err(error) => {
                 return Err(Error::Runtime(format!(
-                    "failed to write {archive_name}: {error}"
+                    "failed to write {}: {error}",
+                    escape_text(archive_name)
                 )));
             }
         }
@@ -440,7 +444,7 @@ fn walk_directory(
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to read directory {}: {error}",
-                current.path.display()
+                escape_path(&current.path)
             )));
         }
     };
@@ -453,7 +457,7 @@ fn walk_directory(
             Some(Err(error)) => {
                 return Err(Error::Runtime(format!(
                     "failed to read an entry of {}: {error}",
-                    current.path.display()
+                    escape_path(&current.path)
                 )));
             }
         };
@@ -481,7 +485,7 @@ fn walk_entry(
         Err(_) => {
             return Err(Error::Runtime(format!(
                 "file name is not valid Unicode: {}",
-                entry_path.display()
+                escape_path(&entry_path)
             )));
         }
     };
@@ -497,7 +501,7 @@ fn walk_entry(
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",
-                entry_path.display()
+                escape_path(&entry_path)
             )));
         }
     };
@@ -517,6 +521,6 @@ fn walk_entry(
     }
     return Err(Error::ValidationError(format!(
         "Symlinks or non-regular files are not allowed: {}",
-        entry_path.display()
+        escape_path(&entry_path)
     )));
 }
