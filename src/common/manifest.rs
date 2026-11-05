@@ -17,6 +17,23 @@ const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 /// Largest `manifest.json` this crate reads, in bytes.
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
+/// Largest manifest name accepted, in Unicode scalar values.
+///
+/// The name becomes the first part of the `<name>-<version>.van`
+/// archive file name, and no file system accepts an unbounded file
+/// name. Capping it during validation makes the rejection an early,
+/// explicit error instead of a late "file name too long" failure after
+/// the `dist` collection work is done. 64 matches the echo cap that
+/// `van` already applies to untrusted values.
+const MAX_NAME_CHARS: usize = 64;
+
+/// Largest manifest version accepted, in Unicode scalar values.
+///
+/// The version becomes the second part of the archive file name and a
+/// SemVer version may carry unbounded build metadata, so like
+/// [`MAX_NAME_CHARS`] it bounds the final file name during validation.
+const MAX_VERSION_CHARS: usize = 64;
+
 /// The parsed and validated `manifest.json` from a plugin directory.
 #[derive(Deserialize)]
 #[non_exhaustive]
@@ -34,7 +51,7 @@ impl Manifest {
     /// directory.
     ///
     /// The manifest must be UTF-8 without a byte order mark, contain a
-    /// non-empty name, a SemVer 2.0.0 version, and a relative
+    /// non-empty bounded-length name and version, and a relative
     /// entrypoint path.
     ///
     /// # Errors
@@ -145,6 +162,7 @@ fn parse_manifest(content: &str) -> Result<Manifest, Error> {
 /// Validate the required manifest members.
 fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
     validate_name(&manifest.name)?;
+    validate_version_length(&manifest.version)?;
     let version = semver::Version::parse(&manifest.version);
     match version {
         Ok(_) => {}
@@ -170,16 +188,23 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
 /// The name is joined onto the target directory to build
 /// `<name>-<version>.van`, so it must be a single path component: free
 /// of path separators, not absolute, without a drive letter, and
-/// neither a `.` nor a `..` segment.
+/// neither a `.` nor a `..` segment. It must also fit in
+/// [`MAX_NAME_CHARS`] Unicode scalar values so the composed file name
+/// stays usable.
 ///
 /// # Errors
 ///
-/// Returns [`Error::ValidationError`] when the name is empty or is not
-/// usable as a file name.
+/// Returns [`Error::ValidationError`] when the name is empty, too
+/// long, or not usable as a file name.
 fn validate_name(name: &str) -> Result<(), Error> {
     if name.is_empty() {
         return Err(Error::ValidationError(String::from(
             "Manifest name must not be empty",
+        )));
+    }
+    if character_count(name) > MAX_NAME_CHARS {
+        return Err(Error::ValidationError(format!(
+            "Manifest name must not exceed {MAX_NAME_CHARS} characters"
         )));
     }
     if name.contains('/') || name.contains('\\') {
@@ -198,4 +223,35 @@ fn invalid_name(name: &str) -> Error {
         "Invalid manifest name: {}",
         escape_text(name)
     ));
+}
+
+/// Validate that the version string is short enough for the archive
+/// file name.
+///
+/// The version is the second part of `<name>-<version>.van` and a
+/// SemVer version may carry unbounded build metadata, so like the name
+/// it is capped during validation. The version is not rendered in the
+/// diagnostic, because an oversized value would flood the terminal,
+/// which matches the echo-cap policy elsewhere in the crate.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the version exceeds
+/// [`MAX_VERSION_CHARS`] Unicode scalar values.
+fn validate_version_length(version: &str) -> Result<(), Error> {
+    if character_count(version) > MAX_VERSION_CHARS {
+        return Err(Error::ValidationError(format!(
+            "Manifest version must not exceed {MAX_VERSION_CHARS} characters"
+        )));
+    }
+    return Ok(());
+}
+
+/// Count the Unicode scalar values of `value`.
+fn character_count(value: &str) -> usize {
+    let mut count: usize = 0;
+    for _ in value.chars() {
+        count += 1;
+    }
+    return count;
 }

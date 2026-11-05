@@ -45,6 +45,25 @@ fn empty_name_is_rejected() {
 }
 
 #[test]
+fn name_at_limit_is_accepted() {
+    let root = temp_root();
+    let name = "a".repeat(64);
+    let content = format!(
+        "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let manifest = expect_manifest(root.path());
+    assert_eq!(manifest.name, name);
+}
+
+#[test]
+fn oversized_name_is_rejected() {
+    let name = "a".repeat(65);
+    let message = name_message(&name);
+    assert_eq!(message, "Manifest name must not exceed 64 characters");
+}
+
+#[test]
 fn invalid_semver_is_rejected() {
     let root = temp_root();
     let content = "{\"name\":\"example-plugin\",\"version\":\"1.0\",\
@@ -52,6 +71,25 @@ fn invalid_semver_is_rejected() {
     write_file(&root.path().join("manifest.json"), content.as_bytes());
     let message = manifest_message(root.path());
     assert_eq!(message, "Invalid SemVer version: 1.0");
+}
+
+#[test]
+fn version_at_limit_is_accepted() {
+    let root = temp_root();
+    let version = format!("1.2.3+{}", "a".repeat(58));
+    let content = format!(
+        "{{\"name\":\"example-plugin\",\"version\":\"{version}\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let manifest = expect_manifest(root.path());
+    assert_eq!(manifest.version, version);
+}
+
+#[test]
+fn oversized_version_is_rejected() {
+    let version = format!("1.2.3+{}", "a".repeat(64));
+    let message = version_message(&version);
+    assert_eq!(message, "Manifest version must not exceed 64 characters");
 }
 
 #[test]
@@ -174,6 +212,30 @@ fn pack_does_not_write_outside_target_for_escaping_name() {
     assert!(!escaped.exists());
 }
 
+#[test]
+fn pack_does_not_create_archive_for_oversized_name() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    let dist = source.join("dist");
+    create_dir(&dist);
+    write_file(&dist.join("app.ts"), b"// app\n");
+    let name = "a".repeat(65);
+    let content = format!(
+        "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&source.join("manifest.json"), content.as_bytes());
+    let target = root.path().join("target");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    let error = match result {
+        Ok(()) => panic!("expected packing to fail"),
+        Err(value) => value,
+    };
+    let message = validation_message(error);
+    assert_eq!(message, "Manifest name must not exceed 64 characters");
+    assert!(!target.exists() || !contains_archive(&target));
+}
+
 /// Create a temporary directory for one test.
 fn temp_root() -> TempDir {
     let created = tempdir();
@@ -225,6 +287,16 @@ fn name_message(name: &str) -> String {
     let root = temp_root();
     let content = format!(
         "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    return manifest_message(root.path());
+}
+
+/// Validate a manifest carrying `version` and return the error message.
+fn version_message(version: &str) -> String {
+    let root = temp_root();
+    let content = format!(
+        "{{\"name\":\"example-plugin\",\"version\":\"{version}\",\"entrypoint\":\"app.ts\"}}"
     );
     write_file(&root.path().join("manifest.json"), content.as_bytes());
     return manifest_message(root.path());
