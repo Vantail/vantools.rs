@@ -10,6 +10,9 @@ use vantools::van;
 /// Name of the subcommand routed to the `pack` module.
 const PACK_SUBCOMMAND: &str = "pack";
 
+/// Name of the subcommand routed to the `verify` module.
+const VERIFY_SUBCOMMAND: &str = "verify";
+
 fn main() -> ExitCode {
     let result = run();
     let error = match result {
@@ -35,6 +38,9 @@ fn run() -> Result<(), Error> {
     };
     if first == PACK_SUBCOMMAND {
         return vantools::pack::run_cli(rest);
+    }
+    if first == VERIFY_SUBCOMMAND {
+        return vantools::verify::run_cli(rest);
     }
     return van::run_with_args(arguments);
 }
