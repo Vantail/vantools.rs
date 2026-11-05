@@ -2,6 +2,9 @@
 //!
 //! The checks implement Sections 3 and 6 of `docs/SPEC.md` so that every
 //! command that reads or writes archives can share one implementation.
+//!
+//! This module also renders untrusted names and paths for diagnostics, so
+//! every command reports a bad file name the same safe way.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -27,22 +30,26 @@ const FORBIDDEN_DIRECTORY: &str = "node_modules";
 pub fn validate_archive_entry(path_str: &str) -> Result<(), Error> {
     if path_str.contains('\\') {
         return Err(Error::ValidationError(format!(
-            "Backslashes are not allowed in paths: {path_str}"
+            "Backslashes are not allowed in paths: {}",
+            escape_text(path_str)
         )));
     }
     if is_absolute_or_has_empty_segment(path_str) {
         return Err(Error::ValidationError(format!(
-            "Absolute paths or drive letters are not allowed: {path_str}"
+            "Absolute paths or drive letters are not allowed: {}",
+            escape_text(path_str)
         )));
     }
     if has_traversal_segment(path_str) {
         return Err(Error::ValidationError(format!(
-            "Path traversal segments are not allowed: {path_str}"
+            "Path traversal segments are not allowed: {}",
+            escape_text(path_str)
         )));
     }
     if !is_nfc(path_str) {
         return Err(Error::ValidationError(format!(
-            "Path is not in Unicode NFC format: {path_str}"
+            "Path is not in Unicode NFC format: {}",
+            escape_text(path_str)
         )));
     }
     return Ok(());
@@ -64,7 +71,7 @@ pub fn validate_file_type(path: &Path) -> Result<(), Error> {
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",
-                path.display()
+                escape_path(path)
             )));
         }
     };
@@ -86,11 +93,46 @@ pub fn validate_no_node_modules(path: &Path) -> Result<(), Error> {
         if component.as_os_str() == OsStr::new(FORBIDDEN_DIRECTORY) {
             return Err(Error::ValidationError(format!(
                 "Forbidden directory '{FORBIDDEN_DIRECTORY}' found at: {}",
-                path.display()
+                escape_path(path)
             )));
         }
     }
     return Ok(());
+}
+
+/// Renders an untrusted path as a single printable line.
+///
+/// A file name cannot be trusted: one containing control characters could
+/// otherwise inject terminal escape sequences or forge log lines when the
+/// diagnostic is printed, hiding which file actually failed.
+///
+/// # Examples
+///
+/// A path containing an escape sequence is rendered with visible escapes
+/// instead of emitting the control characters themselves.
+pub fn escape_path(path: &Path) -> String {
+    let rendered = path.display().to_string();
+    return escape_line(&rendered);
+}
+
+/// Renders an untrusted name or manifest value as a single printable
+/// line.
+///
+/// Use this for values that are not file system paths, such as the
+/// manifest `name`, `version`, and `entrypoint` members, which are
+/// echoed in diagnostics.
+pub fn escape_text(text: &str) -> String {
+    return escape_line(text);
+}
+
+/// Escape a value so that it cannot break a diagnostic across lines.
+///
+/// Control characters and backslashes are rendered as visible escapes,
+/// matching the `Debug` representation of a string. Printable
+/// characters, including grapheme-extended ones, are left unchanged.
+fn escape_line(text: &str) -> String {
+    let escaped = text.escape_debug();
+    return format!("{escaped}");
 }
 
 /// Returns true when the path is absolute, has a drive letter, or has
@@ -124,6 +166,6 @@ fn has_traversal_segment(path_str: &str) -> bool {
 fn symlink_error(path: &Path) -> Error {
     return Error::ValidationError(format!(
         "Symlinks or non-regular files are not allowed: {}",
-        path.display()
+        escape_path(path)
     ));
 }
