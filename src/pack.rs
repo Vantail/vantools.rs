@@ -14,10 +14,12 @@ use crate::common::Error;
 use crate::common::cli::CliCommand;
 use crate::common::command::Command;
 use crate::common::manifest::Manifest;
+use crate::common::output::write_line;
 use crate::common::validation::{
     escape_path, escape_text, validate_archive_entry, validate_file_type,
     validate_no_node_modules,
 };
+use crate::common::walk::{WalkEntry, walk_tree};
 
 /// Name of the manifest file expected at the source root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -80,21 +82,7 @@ impl Command for PackCommand {
         self.ensure_target()?;
         let archive_path = self.archive_path(&manifest);
         warn_if_overwriting(&archive_path)?;
-        let file = create_archive_file(&archive_path)?;
-        let mut writer = ZipWriter::new(file);
-        let options = default_file_options();
-        add_manifest(&mut writer, &manifest_bytes, options)?;
-        write_entries(&mut writer, &entries, options)?;
-        let finished = writer.finish();
-        match finished {
-            Ok(_) => {}
-            Err(error) => {
-                return Err(Error::Runtime(format!(
-                    "failed to finish {}: {error}",
-                    escape_path(&archive_path)
-                )));
-            }
-        }
+        write_archive(&archive_path, &manifest_bytes, &entries)?;
         ignored.sort();
         let files_written = entries.len() + 1;
         return report_success(&archive_path, files_written, &ignored);
@@ -218,13 +206,7 @@ fn require_file(path: &Path, description: &str) -> Result<(), Error> {
 fn notice(message: &str) -> Result<(), Error> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    let written = writeln!(handle, "{message}");
-    return match written {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            Err(Error::Runtime(format!("failed to write output: {error}")))
-        }
-    };
+    return write_line(&mut handle, message, "output");
 }
 
 /// Warn on stderr when the archive path already exists.
@@ -244,13 +226,7 @@ fn warn_if_overwriting(path: &Path) -> Result<(), Error> {
 fn warn(message: &str) -> Result<(), Error> {
     let stderr = io::stderr();
     let mut handle = stderr.lock();
-    let written = writeln!(handle, "{message}");
-    return match written {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            Err(Error::Runtime(format!("failed to write warning: {error}")))
-        }
-    };
+    return write_line(&mut handle, message, "warning");
 }
 
 /// Print the summary of a completed pack to stdout.
@@ -280,115 +256,47 @@ fn report_success(
     return notice(&message);
 }
 
-/// A directory the ignored-file scan still has to read.
-struct PendingScan {
-    /// Path of the directory on disk.
-    path: PathBuf,
-    /// Directory relative to the source root, used in the report.
-    relative: PathBuf,
-}
-
 /// Collect the files of `source` that the archive layout excludes.
 ///
-/// The manifest at the source root and everything below `dist/` belong
-/// to the archive, so every other file is reported to the user. The
-/// pending directories stay in a `Vec` on the heap, mirroring
-/// `collect_entries`, and symlinked directories are never followed.
+/// The manifest at the source root and the `dist/` directory belong to
+/// the archive, so every other file is reported to the user.
 fn collect_ignored(
     source: &Path,
     ignored: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    let mut pending: Vec<PendingScan> = Vec::new();
-    pending.push(PendingScan {
-        path: source.to_path_buf(),
-        relative: PathBuf::new(),
-    });
-    loop {
-        let next = pending.pop();
-        let current = match next {
-            None => break,
-            Some(value) => value,
-        };
-        scan_directory(&current, &mut pending, ignored)?;
-    }
-    return Ok(());
+    let mut visit = |entry: &WalkEntry| -> Result<bool, Error> {
+        if entry.file_type.is_dir() {
+            let relative = entry.relative.as_path();
+            return Ok(relative != Path::new(DIST_DIRECTORY_NAME));
+        }
+        if entry.relative.as_path() == Path::new(MANIFEST_FILE_NAME) {
+            return Ok(false);
+        }
+        ignored.push(entry.relative.clone());
+        return Ok(false);
+    };
+    return walk_tree(source, &mut visit);
 }
 
-/// Read one directory of the ignored-file scan.
-fn scan_directory(
-    current: &PendingScan,
-    pending: &mut Vec<PendingScan>,
-    ignored: &mut Vec<PathBuf>,
+/// Create the archive and write the manifest and collected entries.
+fn write_archive(
+    archive_path: &Path,
+    manifest_bytes: &[u8],
+    entries: &[ArchiveEntry],
 ) -> Result<(), Error> {
-    let read = match fs::read_dir(&current.path) {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to read directory {}: {error}",
-                escape_path(&current.path)
-            )));
-        }
+    let file = create_archive_file(archive_path)?;
+    let mut writer = ZipWriter::new(file);
+    let options = default_file_options();
+    add_manifest(&mut writer, manifest_bytes, options)?;
+    write_entries(&mut writer, entries, options)?;
+    let finished = writer.finish();
+    return match finished {
+        Ok(_) => Ok(()),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to finish {}: {error}",
+            escape_path(archive_path)
+        ))),
     };
-    let mut read = read;
-    loop {
-        let next = read.next();
-        let entry = match next {
-            None => break,
-            Some(Ok(value)) => value,
-            Some(Err(error)) => {
-                return Err(Error::Runtime(format!(
-                    "failed to read an entry of {}: {error}",
-                    escape_path(&current.path)
-                )));
-            }
-        };
-        scan_entry(&entry, current, pending, ignored)?;
-    }
-    return Ok(());
-}
-
-/// Classify one entry of the ignored-file scan.
-fn scan_entry(
-    entry: &fs::DirEntry,
-    current: &PendingScan,
-    pending: &mut Vec<PendingScan>,
-    ignored: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
-    let entry_path = entry.path();
-    let file_name = match entry.file_name().into_string() {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(Error::Runtime(format!(
-                "file name is not valid Unicode: {}",
-                escape_path(&entry_path)
-            )));
-        }
-    };
-    let relative = current.relative.join(&file_name);
-    let file_type = match entry.file_type() {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to inspect {}: {error}",
-                escape_path(&entry_path)
-            )));
-        }
-    };
-    if file_type.is_dir() {
-        if relative.as_path() == Path::new(DIST_DIRECTORY_NAME) {
-            return Ok(());
-        }
-        pending.push(PendingScan {
-            path: entry_path,
-            relative,
-        });
-        return Ok(());
-    }
-    if relative.as_path() == Path::new(MANIFEST_FILE_NAME) {
-        return Ok(());
-    }
-    ignored.push(relative);
-    return Ok(());
 }
 
 /// Create the archive file without following a symlink.
@@ -572,129 +480,51 @@ fn copy_stream(
     }
 }
 
-/// A directory that the walk still has to read, with its archive
-/// prefix.
-struct PendingDirectory {
-    /// Path of the directory on disk.
-    path: PathBuf,
-    /// Prefix the archive names of its entries are built from.
-    prefix: String,
-}
-
 /// Validate and collect every file below `directory` under `prefix`.
 ///
-/// Directories waiting to be read are kept in a `Vec` on the heap and
-/// visited in a loop, so the nesting depth of the source tree cannot
-/// exhaust the stack.
+/// The walk itself lives in [`walk_tree`], which keeps pending
+/// directories on the heap, so the nesting depth of the source tree
+/// cannot exhaust the stack.
 fn collect_entries(
     directory: &Path,
     prefix: &str,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), Error> {
-    let mut pending: Vec<PendingDirectory> = Vec::new();
-    pending.push(PendingDirectory {
-        path: directory.to_path_buf(),
-        prefix: String::from(prefix),
-    });
-    loop {
-        let next = pending.pop();
-        let current = match next {
-            None => break,
-            Some(value) => value,
-        };
-        walk_directory(&current, &mut pending, entries)?;
-    }
-    return Ok(());
+    let mut visit = |entry: &WalkEntry| -> Result<bool, Error> {
+        validate_file_type(&entry.path)?;
+        let archive_name = archive_name_of(prefix, &entry.relative)?;
+        validate_no_node_modules(Path::new(&archive_name))?;
+        validate_archive_entry(&archive_name)?;
+        if entry.file_type.is_dir() {
+            return Ok(true);
+        }
+        entries.push(ArchiveEntry {
+            archive_name,
+            source_path: entry.path.clone(),
+        });
+        return Ok(false);
+    };
+    return walk_tree(directory, &mut visit);
 }
 
-/// Read one directory, queueing its subdirectories and collecting files.
-fn walk_directory(
-    current: &PendingDirectory,
-    pending: &mut Vec<PendingDirectory>,
-    entries: &mut Vec<ArchiveEntry>,
-) -> Result<(), Error> {
-    let read = match fs::read_dir(&current.path) {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to read directory {}: {error}",
-                escape_path(&current.path)
-            )));
-        }
-    };
-    let mut read = read;
-    loop {
-        let next = read.next();
-        let entry = match next {
-            None => break,
-            Some(Ok(value)) => value,
-            Some(Err(error)) => {
+/// Build an archive name from a prefix and a path relative to it.
+///
+/// Archive names always use `/`, and `validate_archive_entry` rejects
+/// any backslash, so a name never depends on the host separator.
+fn archive_name_of(prefix: &str, relative: &Path) -> Result<String, Error> {
+    let mut name = String::from(prefix);
+    for component in relative.components() {
+        let part = match component.as_os_str().to_str() {
+            Some(value) => value,
+            None => {
                 return Err(Error::Runtime(format!(
-                    "failed to read an entry of {}: {error}",
-                    escape_path(&current.path)
+                    "file name is not valid Unicode: {}",
+                    escape_path(relative)
                 )));
             }
         };
-        walk_entry(&entry, current, pending, entries)?;
+        name.push('/');
+        name.push_str(part);
     }
-    return Ok(());
-}
-
-/// Validate one directory entry, queueing directories and collecting
-/// files.
-///
-/// The recursion of this walk lives in the `pending` queue rather than
-/// in the call stack, so nesting depth is bounded by available memory
-/// instead of by the stack size.
-fn walk_entry(
-    entry: &fs::DirEntry,
-    current: &PendingDirectory,
-    pending: &mut Vec<PendingDirectory>,
-    entries: &mut Vec<ArchiveEntry>,
-) -> Result<(), Error> {
-    let entry_path = entry.path();
-    validate_file_type(&entry_path)?;
-    let file_name = match entry.file_name().into_string() {
-        Ok(value) => value,
-        Err(_) => {
-            return Err(Error::Runtime(format!(
-                "file name is not valid Unicode: {}",
-                escape_path(&entry_path)
-            )));
-        }
-    };
-    // Archive names always use `/`: the name of one directory entry is
-    // appended to the already validated prefix, and
-    // `validate_archive_entry` rejects any backslash, so the separator
-    // never depends on the host platform.
-    let archive_name = format!("{}/{}", current.prefix, file_name);
-    validate_no_node_modules(Path::new(&archive_name))?;
-    validate_archive_entry(&archive_name)?;
-    let file_type = match entry.file_type() {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to inspect {}: {error}",
-                escape_path(&entry_path)
-            )));
-        }
-    };
-    if file_type.is_dir() {
-        pending.push(PendingDirectory {
-            path: entry_path,
-            prefix: archive_name,
-        });
-        return Ok(());
-    }
-    if file_type.is_file() {
-        entries.push(ArchiveEntry {
-            archive_name,
-            source_path: entry_path,
-        });
-        return Ok(());
-    }
-    return Err(Error::ValidationError(format!(
-        "Symlinks or non-regular files are not allowed: {}",
-        escape_path(&entry_path)
-    )));
+    return Ok(name);
 }

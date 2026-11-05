@@ -1,13 +1,14 @@
 //! CLI entry point for the `van` package and plugin manager.
 
-use std::env;
 use std::io;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use vantools::common::cli::{CliCommand, report_error, to_exit_code};
+use vantools::common::cli::{
+    CliCommand, collect_arguments, report_error, to_exit_code, version_line,
+};
 use vantools::common::command::Command;
+use vantools::common::output::write_line;
 use vantools::common::{Error, VanError};
 use vantools::pack::PackCommand;
 use vantools::van;
@@ -65,27 +66,6 @@ fn run() -> Result<(), Error> {
         return van::run_with_args(arguments);
     }
     return run_pack(arguments.as_slice());
-}
-
-/// Collect the process arguments after the program name.
-///
-/// Arguments that are not valid Unicode are rejected as usage errors
-/// rather than aborting the process.
-fn collect_arguments() -> Result<Vec<String>, Error> {
-    let mut arguments: Vec<String> = Vec::new();
-    for raw_argument in env::args_os().skip(1) {
-        let converted = raw_argument.into_string();
-        let argument = match converted {
-            Ok(value) => value,
-            Err(_) => {
-                return Err(Error::Usage(String::from(
-                    "command-line argument is not valid Unicode",
-                )));
-            }
-        };
-        arguments.push(argument);
-    }
-    return Ok(arguments);
 }
 
 /// Parse the `pack` subcommand arguments and run the command.
@@ -160,18 +140,11 @@ fn missing_arguments() -> Error {
 fn print_line(text: &str) -> Result<(), Error> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    let written = writeln!(handle, "{text}");
-    return match written {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            Err(Error::Runtime(format!("failed to write output: {error}")))
-        }
-    };
+    return write_line(&mut handle, text, "output");
 }
 
 /// Print the version banner (`van <crate-version>`) to stdout.
 fn print_version() -> Result<(), Error> {
-    let version: &str = env!("CARGO_PKG_VERSION");
-    let line: String = format!("van {version}");
+    let line: String = version_line();
     return print_line(&line);
 }

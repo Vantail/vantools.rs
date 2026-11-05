@@ -1,5 +1,6 @@
 //! CLI support helpers for reporting errors and mapping exit codes.
 
+use std::env;
 use std::io::Write;
 
 use crate::common::Error;
@@ -36,6 +37,37 @@ pub fn to_exit_code(code: i32) -> u8 {
         Ok(value) => value,
         Err(_) => FALLBACK_EXIT_CODE,
     };
+}
+
+/// Collect the process arguments after the program name.
+///
+/// Arguments that are not valid Unicode are rejected as usage errors
+/// rather than aborting the process.
+///
+/// # Errors
+///
+/// Returns [`Error::Usage`] when an argument is not valid Unicode.
+pub fn collect_arguments() -> Result<Vec<String>, Error> {
+    let mut arguments: Vec<String> = Vec::new();
+    for raw_argument in env::args_os().skip(1) {
+        let converted = raw_argument.into_string();
+        let argument = match converted {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::Usage(String::from(
+                    "command-line argument is not valid Unicode",
+                )));
+            }
+        };
+        arguments.push(argument);
+    }
+    return Ok(arguments);
+}
+
+/// Render the version banner (`van <crate-version>`).
+pub fn version_line() -> String {
+    let version: &str = env!("CARGO_PKG_VERSION");
+    return format!("van {version}");
 }
 
 /// Metadata and behavior shared by every CLI command.
