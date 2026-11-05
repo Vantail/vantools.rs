@@ -16,6 +16,6 @@ fn unknown_subcommand_limits_argument_length() {
     let argument = "a".repeat(MAX_ECHO_CHARS + 10);
     let rendered = format_unknown_subcommand(&argument);
     let expected =
-        format!("unknown subcommand '{}'", "a".repeat(MAX_ECHO_CHARS));
+        format!("unknown subcommand '{}...'", "a".repeat(MAX_ECHO_CHARS));
     assert_eq!(rendered, expected);
 }

@@ -113,6 +113,19 @@ fn control_characters_in_entrypoint_are_rendered_as_escapes() {
 }
 
 #[test]
+fn entrypoint_echo_is_bounded() {
+    let root = temp_root();
+    let entrypoint = format!("{}/../x.ts", "a".repeat(100));
+    let content = format!(
+        "{{\"name\":\"example-plugin\",\"version\":\"1.2.3\",\"entrypoint\":\"{entrypoint}\"}}"
+    );
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let message = manifest_message(root.path());
+    let expected = format!("Invalid entrypoint path: {}...", "a".repeat(64));
+    assert_eq!(message, expected);
+}
+
+#[test]
 fn name_with_parent_segment_is_rejected() {
     let message = name_message("../evil");
     assert_eq!(message, "Invalid manifest name: ../evil");
@@ -134,6 +147,17 @@ fn absolute_name_is_rejected() {
 fn drive_letter_name_is_rejected() {
     let message = name_message("C:evil");
     assert_eq!(message, "Invalid manifest name: C:evil");
+}
+
+#[test]
+fn name_echo_is_bounded() {
+    // A name longer than the limit is rejected by the length rule
+    // first, so a rendered name never needs truncation; a name at the
+    // limit must still echo in full without an ellipsis.
+    let name = format!("{}/x", "a".repeat(62));
+    let message = name_message(&name);
+    let expected = format!("Invalid manifest name: {name}");
+    assert_eq!(message, expected);
 }
 
 #[test]

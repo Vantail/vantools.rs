@@ -163,6 +163,17 @@ fn pack_unknown_argument_escapes_control_characters() {
 }
 
 #[test]
+fn pack_unknown_argument_bounds_echoed_length() {
+    let argument = "a".repeat(100);
+    let output = run(&["pack", argument.as_str()]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(&"a".repeat(64)));
+    assert!(stderr.contains("..."));
+    assert!(!stderr.contains(&"a".repeat(65)));
+}
+
+#[test]
 fn pack_missing_arguments_reports_cli_error() {
     let output = run(&["pack", "--source", "examples/test-plugin"]);
     assert_eq!(output.status.code(), Some(1));
