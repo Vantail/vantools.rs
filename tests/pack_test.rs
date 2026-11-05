@@ -30,6 +30,68 @@ const BAD_ARCHIVE: &str = "bad-plugin-0.1.0.van";
 const RAW_MANIFEST: &str = "{\n  \"name\": \"raw-plugin\",\n  \"version\": \"2.0.0\",\n  \"entrypoint\": \"app.ts\",\n  \"extra\": \"ignored\"\n}";
 
 #[test]
+fn pack_rejects_missing_dist_directory() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_dir(&source);
+    write_file(&source.join("manifest.json"), TEST_MANIFEST);
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    let expected =
+        format!("Missing 'dist' directory in source: {}", source.display());
+    assert_validation_message(error, &expected);
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
+#[test]
+fn pack_rejects_missing_entrypoint() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    let dist = source.join("dist");
+    create_dir(&dist);
+    write_file(&source.join("manifest.json"), TEST_MANIFEST);
+    write_file(&dist.join("other.ts"), "// not the entrypoint\n");
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    let entrypoint = dist.join("app.ts");
+    let expected =
+        format!("Entrypoint file not found in dist: {}", entrypoint.display());
+    assert_validation_message(error, &expected);
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
+#[test]
+fn pack_keeps_only_the_manifest_and_dist_contents() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let nested = source.join("dist").join("src");
+    create_dir(&nested);
+    write_file(&nested.join("util.ts"), "// helper\n");
+    write_file(&source.join(".gitignore"), "dist\n");
+    let outside = source.join("outside");
+    create_dir(&outside);
+    write_file(&outside.join("secret.txt"), "not part of the plugin\n");
+    let target = root.path().join("target");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    let archive = target.join(BAD_ARCHIVE);
+    let mut names = archive_entry_names(&archive);
+    names.sort();
+    let mut expected: Vec<String> = vec![
+        String::from("dist/app.ts"),
+        String::from("dist/src/util.ts"),
+        String::from("manifest.json"),
+    ];
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn pack_creates_van_archive() {
     let created = tempdir();
     let target_dir = match created {
@@ -357,6 +419,37 @@ fn read_archive_entry(archive: &Path, entry_name: &str) -> Vec<u8> {
         Err(error) => panic!("failed to read {entry_name}: {error}"),
     }
     return content;
+}
+
+/// Collect the entry names of a `.van` archive in archive order.
+fn archive_entry_names(archive: &Path) -> Vec<String> {
+    let opened = fs::File::open(archive);
+    let file = match opened {
+        Ok(value) => value,
+        Err(error) => panic!("failed to open {}: {error}", archive.display()),
+    };
+    let reader = ZipArchive::new(file);
+    let mut archive_file = match reader {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {}: {error}", archive.display()),
+    };
+    let count = archive_file.len();
+    let mut names: Vec<String> = Vec::new();
+    for index in 0..count {
+        let entry = archive_file.by_index(index);
+        let entry_file = match entry {
+            Ok(value) => value,
+            Err(error) => panic!("failed to read entry {index}: {error}"),
+        };
+        let name = match entry_file.name() {
+            Ok(value) => value,
+            Err(error) => {
+                panic!("failed to read the name of entry {index}: {error}")
+            }
+        };
+        names.push(String::from(name));
+    }
+    return names;
 }
 
 /// Run `pack` and return the error it must produce.

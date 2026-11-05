@@ -37,6 +37,11 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// the same name is overwritten; an existing symlink or other
 /// non-regular entry is refused so the archive cannot be redirected
 /// outside the target directory.
+///
+/// The archive layout follows Section 4 of `docs/SPEC.md`: the
+/// validated `manifest.json` sits at the archive root and only the
+/// contents of `dist/` are added, each under the `dist/` prefix. Other
+/// entries of the source directory are never read into the archive.
 #[non_exhaustive]
 pub struct PackCommand {
     /// The plugin source directory holding `manifest.json` and `dist/`.
@@ -59,14 +64,15 @@ impl Command for PackCommand {
         let dist_path = self.source.join(DIST_DIRECTORY_NAME);
         require_directory(&self.source, "source directory")?;
         require_file(&manifest_path, MANIFEST_FILE_NAME)?;
-        require_directory(&dist_path, DIST_DIRECTORY_NAME)?;
         validate_file_type(&manifest_path)?;
+        require_dist_directory(&self.source, &dist_path)?;
         validate_file_type(&dist_path)?;
+        let loaded = Manifest::from_dir_with_bytes(&self.source)?;
+        let (manifest, manifest_bytes) = loaded;
+        require_entrypoint(&dist_path, &manifest.entrypoint)?;
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
         self.ensure_target()?;
-        let loaded = Manifest::from_dir_with_bytes(&self.source)?;
-        let (manifest, manifest_bytes) = loaded;
         let archive_path = self.archive_path(&manifest);
         let file = create_archive_file(&archive_path)?;
         let mut writer = ZipWriter::new(file);
@@ -149,6 +155,40 @@ fn require_directory(path: &Path, description: &str) -> Result<(), Error> {
     return Err(Error::Runtime(format!(
         "{description} not found: {}",
         path.display()
+    )));
+}
+
+/// Return an error unless `<source>/dist` is an existing directory.
+///
+/// The reported path is the source directory, because a missing `dist/`
+/// means the source is not a packable plugin rather than that the user
+/// passed a wrong `dist` path.
+fn require_dist_directory(
+    source: &Path,
+    dist_path: &Path,
+) -> Result<(), Error> {
+    if dist_path.is_dir() {
+        return Ok(());
+    }
+    return Err(Error::ValidationError(format!(
+        "Missing 'dist' directory in source: {}",
+        source.display()
+    )));
+}
+
+/// Return an error unless `<dist>/<entrypoint>` is an existing file.
+///
+/// The `entrypoint` is validated as a relative archive path when the
+/// manifest is read, so joining it onto `dist_path` cannot escape the
+/// `dist` directory.
+fn require_entrypoint(dist_path: &Path, entrypoint: &str) -> Result<(), Error> {
+    let entrypoint_path = dist_path.join(entrypoint);
+    if entrypoint_path.is_file() {
+        return Ok(());
+    }
+    return Err(Error::ValidationError(format!(
+        "Entrypoint file not found in dist: {}",
+        entrypoint_path.display()
     )));
 }
 
@@ -404,6 +444,10 @@ fn collect_entry(
             )));
         }
     };
+    // Archive names always use `/`: the name of one directory entry is
+    // appended to the already validated prefix, and
+    // `validate_archive_entry` rejects any backslash, so the separator
+    // never depends on the host platform.
     let archive_name = format!("{prefix}/{file_name}");
     validate_no_node_modules(Path::new(&archive_name))?;
     validate_archive_entry(&archive_name)?;
