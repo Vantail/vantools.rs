@@ -92,6 +92,36 @@ fn pack_keeps_only_the_manifest_and_dist_contents() {
 }
 
 #[test]
+fn pack_collects_files_from_nested_dist_directories() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let deep = source.join("dist").join("src").join("deep").join("nested");
+    create_dir(&deep);
+    write_file(&deep.join("leaf.ts"), "// leaf\n");
+    let middle = source.join("dist").join("src");
+    write_file(&middle.join("sibling.ts"), "// sibling\n");
+    let target = root.path().join("target");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    let archive = target.join(BAD_ARCHIVE);
+    let mut names = archive_entry_names(&archive);
+    names.sort();
+    let mut expected: Vec<String> = vec![
+        String::from("dist/app.ts"),
+        String::from("dist/src/deep/nested/leaf.ts"),
+        String::from("dist/src/sibling.ts"),
+        String::from("manifest.json"),
+    ];
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn pack_creates_van_archive() {
     let created = tempdir();
     let target_dir = match created {
