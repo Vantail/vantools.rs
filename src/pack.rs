@@ -34,10 +34,10 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// The `pack` command.
 ///
 /// Reads a plugin source directory and writes a `<name>-<version>.van`
-/// archive into the target directory. An existing regular archive with
-/// the same name is overwritten; an existing symlink or other
-/// non-regular entry is refused so the archive cannot be redirected
-/// outside the target directory.
+/// archive into the target directory. An existing archive with the same
+/// name is overwritten after a warning is printed to stderr; an existing
+/// symlink or other non-regular entry is refused so the archive cannot
+/// be redirected outside the target directory.
 ///
 /// The archive layout follows Section 4 of `docs/SPEC.md`: the
 /// validated `manifest.json` sits at the archive root and only the
@@ -75,6 +75,7 @@ impl Command for PackCommand {
         collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
         self.ensure_target()?;
         let archive_path = self.archive_path(&manifest);
+        warn_if_overwriting(&archive_path)?;
         let file = create_archive_file(&archive_path)?;
         let mut writer = ZipWriter::new(file);
         let options = default_file_options();
@@ -213,6 +214,32 @@ fn notice(message: &str) -> Result<(), Error> {
         Ok(()) => Ok(()),
         Err(error) => {
             Err(Error::Runtime(format!("failed to write output: {error}")))
+        }
+    };
+}
+
+/// Warn on stderr when the archive path already exists.
+///
+/// The warning goes to stderr so that stdout keeps carrying only the
+/// progress notices of a successful pack.
+fn warn_if_overwriting(path: &Path) -> Result<(), Error> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let message =
+        format!("Warning: Overwriting existing archive: {}", escape_path(path));
+    return warn(&message);
+}
+
+/// Print a warning to stderr.
+fn warn(message: &str) -> Result<(), Error> {
+    let stderr = io::stderr();
+    let mut handle = stderr.lock();
+    let written = writeln!(handle, "{message}");
+    return match written {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            Err(Error::Runtime(format!("failed to write warning: {error}")))
         }
     };
 }
