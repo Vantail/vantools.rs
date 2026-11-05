@@ -69,12 +69,41 @@ fn run() -> Result<(), Error> {
     return run_pack(arguments.as_slice());
 }
 
+/// A `pack` invocation resolved into an action to execute.
+///
+/// The argument scan stops at the first `--help` or `--version` flag
+/// without examining later arguments, so the resolution of a scan that
+/// stopped early must be distinguishable from a fully parsed run.
+enum PackRequest {
+    /// Run the command with the parsed flag values.
+    Run {
+        /// Value of the source flag, when given.
+        source: Option<PathBuf>,
+        /// Value of the target flag, when given.
+        target: Option<PathBuf>,
+    },
+    /// Print the help text and exit successfully.
+    Help,
+    /// Print the version banner and exit successfully.
+    Version,
+}
+
 /// Parse the `pack` subcommand arguments and run the command.
 ///
 /// Help and version flags are answered with exit code 0. Unknown or
 /// incomplete arguments produce a [`Error::CliError`] and exit code 1.
 fn run_pack(arguments: &[String]) -> Result<(), Error> {
-    let metadata = PackCommand::new(PathBuf::new(), PathBuf::new());
+    let request = parse_pack_request(arguments)?;
+    return execute_pack_request(request);
+}
+
+/// Scan the arguments and parse the flags into a request.
+///
+/// The scan stops at the first `--help` or `--version` flag, so later
+/// arguments are not examined and a stopped-early request must stay
+/// distinguishable from a fully parsed run. A repeated `-s`/`-t`
+/// replaces the earlier value, as before.
+fn parse_pack_request(arguments: &[String]) -> Result<PackRequest, Error> {
     let mut source: Option<PathBuf> = None;
     let mut target: Option<PathBuf> = None;
     let mut remaining = arguments.iter().skip(1);
@@ -85,31 +114,72 @@ fn run_pack(arguments: &[String]) -> Result<(), Error> {
             Some(value) => value.as_str(),
         };
         if argument == HELP_FLAG || argument == HELP_LONG_FLAG {
-            return print_line(metadata.help());
+            return Ok(PackRequest::Help);
         }
         if argument == VERSION_FLAG || argument == VERSION_LONG_FLAG {
-            return print_version();
+            return Ok(PackRequest::Version);
         }
         let is_source = argument == SOURCE_FLAG || argument == SOURCE_LONG_FLAG;
         if is_source {
-            let value = match remaining.next() {
-                Some(value) => value,
-                None => return Err(missing_arguments()),
-            };
-            source = Some(PathBuf::from(value));
+            source = Some(parse_flag_value(&mut remaining)?);
             continue;
         }
         let is_target = argument == TARGET_FLAG || argument == TARGET_LONG_FLAG;
         if is_target {
-            let value = match remaining.next() {
-                Some(value) => value,
-                None => return Err(missing_arguments()),
-            };
-            target = Some(PathBuf::from(value));
+            target = Some(parse_flag_value(&mut remaining)?);
             continue;
         }
         return Err(unknown_argument(argument));
     }
+    return Ok(PackRequest::Run {
+        source,
+        target,
+    });
+}
+
+/// Consume the value that follows a `-s`/`-t` flag.
+///
+/// # Errors
+///
+/// Returns [`Error::CliError`] when the flag is the last argument and
+/// no value follows it.
+fn parse_flag_value<'a, I>(remaining: &mut I) -> Result<PathBuf, Error>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let value = match remaining.next() {
+        Some(value) => value,
+        None => return Err(missing_arguments()),
+    };
+    return Ok(PathBuf::from(value));
+}
+
+/// Execute a parsed `pack` request.
+fn execute_pack_request(request: PackRequest) -> Result<(), Error> {
+    return match request {
+        PackRequest::Help => print_pack_help(),
+        PackRequest::Version => print_version(),
+        PackRequest::Run {
+            source,
+            target,
+        } => run_pack_command(source, target),
+    };
+}
+
+/// Print the full help text of the `pack` command to stdout.
+fn print_pack_help() -> Result<(), Error> {
+    let metadata = PackCommand::new(PathBuf::new(), PathBuf::new());
+    return print_line(metadata.help());
+}
+
+/// Resolve the required flags and run the `pack` command.
+///
+/// The source flag is reported as missing before the target flag, the
+/// same order the flat resolution used.
+fn run_pack_command(
+    source: Option<PathBuf>,
+    target: Option<PathBuf>,
+) -> Result<(), Error> {
     let resolved_source = match source {
         Some(value) => value,
         None => return Err(missing_arguments()),
