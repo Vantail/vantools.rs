@@ -19,6 +19,9 @@ use zip::write::SimpleFileOptions;
 /// Name of the archives built by the helpers in this file.
 const SAMPLE_ARCHIVE: &str = "sample.van";
 
+/// Manifest used by the archives that are expected to be valid.
+const SAMPLE_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
+
 #[test]
 fn verify_accepts_a_packed_archive() {
     let root = temp_root();
@@ -105,13 +108,75 @@ fn verify_rejects_symlink_entries() {
 fn verify_accepts_regular_entries_with_permissions() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
-    write_permission_archive(&archive, "dist/app.ts", 0o644);
+    let entries: [(&str, &str); 2] =
+        [("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")];
+    write_archive_with_permissions(&archive, &entries, 0o644);
     let verify = VerifyCommand::new(archive);
     let result = verify.run();
     match result {
         Ok(()) => {}
         Err(error) => panic!("verify failed: {error}"),
     }
+}
+
+#[test]
+fn verify_rejects_archive_without_manifest() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_archive(&archive, &[("dist/app.ts", "// placeholder\n")]);
+    let error = verify_error(&archive);
+    let expected =
+        format!("Missing 'manifest.json' in archive: {}", archive.display());
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_archive_without_dist() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 2] =
+        [("manifest.json", SAMPLE_MANIFEST), ("app.ts", "// placeholder\n")];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected =
+        format!("Missing 'dist' directory in archive: {}", archive.display());
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_archive_without_entrypoint() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 2] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/other.ts", "// placeholder\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Entrypoint file not found in dist: dist/app.ts",
+    );
+}
+
+#[test]
+fn verify_rejects_invalid_manifest() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 2] = [
+        ("manifest.json", "{\"name\":\"sample-plugin\"}"),
+        ("dist/app.ts", "// placeholder\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let message = match error {
+        Error::ValidationError(value) => value,
+        other => panic!("unexpected error: {other}"),
+    };
+    assert!(
+        message.contains("Manifest is not valid JSON"),
+        "unexpected error: {message}"
+    );
 }
 
 #[test]
@@ -144,10 +209,20 @@ fn verify_cli_prints_a_tree() {
     let output = run_van(&["verify", "--source", archive_path]);
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Archive: sample.van"));
-    assert!(stdout.contains("├── dist"));
+    assert!(stdout.contains("Verifying archive: sample.van"));
+    assert!(stdout.contains("  [OK] Paths and ZIP structure are valid."));
+    assert!(stdout.contains("  [OK] manifest.json is present and valid."));
+    assert!(
+        stdout.contains("  [OK] dist/ and entrypoint (app.ts) are present.")
+    );
+    assert!(stdout.contains("--- manifest.json ---"));
+    assert!(stdout.contains("\"name\":\"sample-plugin\""));
+    assert!(stdout.contains("---------------------"));
+    assert!(stdout.contains("Archive Contents:"));
+    assert!(stdout.contains("├── dist/"));
     assert!(stdout.contains("│   └── app.ts"));
     assert!(stdout.contains("└── manifest.json"));
+    assert!(stdout.contains("Archive is valid."));
 }
 
 #[test]
@@ -187,10 +262,10 @@ fn run_van(arguments: &[&str]) -> Output {
     };
 }
 
-/// Write an archive with a manifest and one `dist` file.
+/// Write an archive with a valid manifest and one `dist` file.
 fn write_minimal_archive(path: &Path) {
     let entries: [(&str, &str); 2] =
-        [("manifest.json", "{}"), ("dist/app.ts", "// placeholder\n")];
+        [("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")];
     write_archive(path, &entries);
 }
 
@@ -206,17 +281,23 @@ fn write_archive(path: &Path, entries: &[(&str, &str)]) {
     finish_archive(writer, path);
 }
 
-/// Write an archive holding one entry with the given Unix permissions.
+/// Write an archive holding `entries` with the given Unix permissions.
 ///
-/// The permissions replace the lower mode bits only, so the entry stays
-/// a regular file.
-fn write_permission_archive(path: &Path, name: &str, mode: u32) {
+/// The permissions replace the lower mode bits only, so every entry
+/// stays a regular file.
+fn write_archive_with_permissions(
+    path: &Path,
+    entries: &[(&str, &str)],
+    mode: u32,
+) {
     let mut writer = create_writer(path);
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .unix_permissions(mode);
-    start_file(&mut writer, name, options);
-    write_content(&mut writer, "// placeholder\n");
+    for (name, content) in entries {
+        start_file(&mut writer, name, options);
+        write_content(&mut writer, content);
+    }
     finish_archive(writer, path);
 }
 

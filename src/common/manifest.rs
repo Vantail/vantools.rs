@@ -15,7 +15,7 @@ use crate::common::validation::{
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 
 /// Largest `manifest.json` this crate reads, in bytes.
-const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
 /// Largest manifest name accepted, in Unicode scalar values.
 ///
@@ -82,11 +82,34 @@ impl Manifest {
     ) -> Result<(Self, Vec<u8>), Error> {
         let manifest_path = source.join("manifest.json");
         let bytes = read_manifest(&manifest_path)?;
-        reject_bom(&bytes)?;
-        let content = decode_utf8(&bytes)?;
+        let manifest = Self::from_bytes(&bytes)?;
+        return Ok((manifest, bytes));
+    }
+
+    /// Validates and parses manifest bytes that were already read.
+    ///
+    /// The bytes must be UTF-8 without a byte order mark and at most
+    /// [`MAX_MANIFEST_BYTES`] long, and the parsed manifest must carry a
+    /// usable name and version and a relative entrypoint path. These are
+    /// the checks [`Manifest::from_dir_with_bytes`] applies to a
+    /// manifest on disk, so a manifest read from an archive is validated
+    /// with the same rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValidationError`] when the bytes exceed
+    /// [`MAX_MANIFEST_BYTES`] or their content is invalid.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+            return Err(Error::ValidationError(String::from(
+                "Manifest is larger than 1 MiB",
+            )));
+        }
+        reject_bom(bytes)?;
+        let content = decode_utf8(bytes)?;
         let manifest = parse_manifest(content)?;
         validate_manifest(&manifest)?;
-        return Ok((manifest, bytes));
+        return Ok(manifest);
     }
 }
 

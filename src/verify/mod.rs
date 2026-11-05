@@ -1,11 +1,17 @@
 //! Implementation of the `verify` command.
 //!
-//! The command opens an existing `.van` archive, validates every entry
-//! name with the shared archive rules, rejects symbolic links, and
-//! prints the archive contents as a tree. Nothing is ever extracted.
+//! The command opens an existing `.van` archive and validates it
+//! without extracting anything: every entry name is checked with the
+//! shared archive rules, symbolic links are rejected, the archived
+//! `manifest.json` is validated with the rules the `pack` command
+//! applies, and the `dist/` directory and its entrypoint must exist.
+//! A valid archive is reported with its manifest and its contents as a
+//! tree.
 
 use std::fs::File;
 use std::io;
+use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
@@ -13,7 +19,8 @@ use zip::ZipArchive;
 use crate::common::Error;
 use crate::common::cli::CliCommand;
 use crate::common::command::Command;
-use crate::common::output::write_line;
+use crate::common::manifest::{MAX_MANIFEST_BYTES, Manifest};
+use crate::common::output::{write_line, write_text};
 use crate::common::validation::{
     escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
 };
@@ -28,16 +35,34 @@ const FILE_TYPE_MASK: u32 = 0o170000;
 /// File-type bits of a symbolic link in a Unix mode.
 const SYMLINK_FILE_TYPE: u32 = 0o120000;
 
+/// Name of the manifest file expected at the archive root.
+const MANIFEST_FILE_NAME: &str = "manifest.json";
+
+/// Name of the directory that holds the plugin payload.
+const DIST_DIRECTORY_NAME: &str = "dist";
+
 /// The `verify` command.
 ///
 /// Opens the archive at `source` and validates its structure without
 /// extracting it: every entry name must be a safe relative path, no
-/// entry may carry a `node_modules` component, and no entry may be a
-/// symbolic link. A valid archive is printed as a tree.
+/// entry may carry a `node_modules` component, no entry may be a
+/// symbolic link, the manifest must pass the same checks `pack`
+/// applies, and `dist/` must contain the manifest entrypoint. A valid
+/// archive is reported with its manifest and its contents as a tree.
 #[non_exhaustive]
 pub struct VerifyCommand {
     /// The `.van` archive to verify.
     pub source: PathBuf,
+}
+
+/// Everything a successful archive check produced.
+struct ArchiveCheck {
+    /// Entry names in archive order.
+    names: Vec<String>,
+    /// The parsed and validated manifest.
+    manifest: Manifest,
+    /// The exact manifest bytes that passed validation.
+    manifest_bytes: Vec<u8>,
 }
 
 /// One node of the archive tree.
@@ -60,8 +85,8 @@ struct PendingNode<'a> {
 
 impl Command for VerifyCommand {
     fn run(&self) -> Result<(), Error> {
-        let names = self.collect_entry_names()?;
-        return print_tree(&self.source, names);
+        let check = self.inspect()?;
+        return print_report(&self.source, &check);
     }
 }
 
@@ -73,12 +98,12 @@ impl VerifyCommand {
         };
     }
 
-    /// Open the archive and validate every entry name.
+    /// Open the archive and run every check on it.
     ///
-    /// The entries are validated in archive order and the first invalid
-    /// entry ends the run, so an invalid archive is never partly
-    /// printed.
-    fn collect_entry_names(&self) -> Result<Vec<String>, Error> {
+    /// The checks run in the order the report prints them, and the
+    /// first failure ends the run, so an invalid archive is never
+    /// partly reported.
+    fn inspect(&self) -> Result<ArchiveCheck, Error> {
         let file = match File::open(&self.source) {
             Ok(value) => value,
             Err(error) => {
@@ -98,6 +123,23 @@ impl VerifyCommand {
                 )));
             }
         };
+        let names = self.collect_entry_names(&mut archive)?;
+        let (manifest, manifest_bytes) =
+            self.read_manifest(&mut archive, &names)?;
+        require_dist(&names, &self.source)?;
+        require_entrypoint(&names, &manifest)?;
+        return Ok(ArchiveCheck {
+            names,
+            manifest,
+            manifest_bytes,
+        });
+    }
+
+    /// Validate every entry name and collect the entry names.
+    fn collect_entry_names(
+        &self,
+        archive: &mut ZipArchive<File>,
+    ) -> Result<Vec<String>, Error> {
         let count = archive.len();
         let mut names: Vec<String> = Vec::new();
         for index in 0..count {
@@ -127,6 +169,43 @@ impl VerifyCommand {
         }
         return Ok(names);
     }
+
+    /// Read the archived manifest and validate its bytes.
+    fn read_manifest(
+        &self,
+        archive: &mut ZipArchive<File>,
+        names: &[String],
+    ) -> Result<(Manifest, Vec<u8>), Error> {
+        if !entry_present(names, MANIFEST_FILE_NAME) {
+            return Err(Error::ValidationError(format!(
+                "Missing 'manifest.json' in archive: {}",
+                escape_path(&self.source)
+            )));
+        }
+        let entry = match archive.by_name(MANIFEST_FILE_NAME) {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to read '{MANIFEST_FILE_NAME}' from {}: {error}",
+                    escape_path(&self.source)
+                )));
+            }
+        };
+        let mut limited = entry.take(MAX_MANIFEST_BYTES + 1);
+        let mut bytes: Vec<u8> = Vec::new();
+        let read = limited.read_to_end(&mut bytes);
+        match read {
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to read '{MANIFEST_FILE_NAME}' from {}: {error}",
+                    escape_path(&self.source)
+                )));
+            }
+        }
+        let manifest = Manifest::from_bytes(&bytes)?;
+        return Ok((manifest, bytes));
+    }
 }
 
 impl CliCommand for VerifyCommand {
@@ -143,7 +222,17 @@ impl CliCommand for VerifyCommand {
     }
 }
 
-/// Return an error when the entry mode marks a symbolic link.
+/// Return true when `names` holds an entry named `expected`.
+fn entry_present(names: &[String], expected: &str) -> bool {
+    for name in names {
+        if name == expected {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Return an error unless the entry mode marks a symbolic link.
 ///
 /// The mode comes from the ZIP external attributes and is absent for
 /// archives written on platforms without Unix modes, so a missing mode
@@ -163,26 +252,87 @@ fn reject_symlink(name: &str, mode: Option<u32>) -> Result<(), Error> {
     return Ok(());
 }
 
-/// Print the validated archive as a tree.
-///
-/// The header names the archive, and every entry is rendered below it
-/// with its parent directories. `names` is sorted so that the tree
-/// groups the entries of one directory together.
-fn print_tree(source: &Path, mut names: Vec<String>) -> Result<(), Error> {
-    names.sort();
-    let tree = build_tree(&names);
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    let header = format!("Archive: {}", archive_label(source));
-    write_line(&mut handle, &header, "output")?;
-    let lines = render_tree(&tree);
-    for line in lines {
-        write_line(&mut handle, &line, "output")?;
+/// Return an error unless some entry lives below `dist/`.
+fn require_dist(names: &[String], source: &Path) -> Result<(), Error> {
+    let prefix = format!("{DIST_DIRECTORY_NAME}/");
+    for name in names {
+        if name.starts_with(prefix.as_str()) {
+            return Ok(());
+        }
     }
-    return Ok(());
+    return Err(Error::ValidationError(format!(
+        "Missing 'dist' directory in archive: {}",
+        escape_path(source)
+    )));
 }
 
-/// Render the archive file name used in the tree header.
+/// Return an error unless the manifest entrypoint exists under `dist/`.
+fn require_entrypoint(
+    names: &[String],
+    manifest: &Manifest,
+) -> Result<(), Error> {
+    let expected = format!("{DIST_DIRECTORY_NAME}/{}", manifest.entrypoint);
+    for name in names {
+        if name == &expected {
+            return Ok(());
+        }
+    }
+    return Err(Error::ValidationError(format!(
+        "Entrypoint file not found in dist: {}",
+        escape_text(&expected)
+    )));
+}
+
+/// Print the result of a successful verification.
+fn print_report(source: &Path, check: &ArchiveCheck) -> Result<(), Error> {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    let header = format!("Verifying archive: {}", archive_label(source));
+    write_line(&mut handle, &header, "output")?;
+    write_line(
+        &mut handle,
+        "  [OK] Paths and ZIP structure are valid.",
+        "output",
+    )?;
+    write_line(
+        &mut handle,
+        "  [OK] manifest.json is present and valid.",
+        "output",
+    )?;
+    let entrypoint = escape_text(&check.manifest.entrypoint);
+    let entrypoint_line =
+        format!("  [OK] dist/ and entrypoint ({entrypoint}) are present.");
+    write_line(&mut handle, &entrypoint_line, "output")?;
+    write_line(&mut handle, "", "output")?;
+    write_line(&mut handle, "--- manifest.json ---", "output")?;
+    write_manifest(&mut handle, &check.manifest_bytes)?;
+    write_line(&mut handle, "---------------------", "output")?;
+    write_line(&mut handle, "", "output")?;
+    write_line(&mut handle, "Archive Contents:", "output")?;
+    let mut sorted = check.names.clone();
+    sorted.sort();
+    let tree = build_tree(&sorted);
+    for line in render_tree(&tree) {
+        write_line(&mut handle, &line, "output")?;
+    }
+    write_line(&mut handle, "", "output")?;
+    return write_line(&mut handle, "Archive is valid.", "output");
+}
+
+/// Print the exact manifest bytes, ending with one newline.
+fn write_manifest<W>(handle: &mut W, bytes: &[u8]) -> Result<(), Error>
+where
+    W: Write,
+{
+    let text = String::from_utf8_lossy(bytes);
+    write_text(handle, &text, "output")?;
+    if text.ends_with('\n') {
+        return Ok(());
+    }
+    return write_text(handle, "\n", "output");
+}
+
+/// Render the archive file name used in the report header.
 fn archive_label(source: &Path) -> String {
     let name = match source.file_name() {
         Some(value) => value,
@@ -239,7 +389,8 @@ fn child_position(node: &TreeNode, name: &str) -> Option<usize> {
 /// Render the tree below `root` as one line per node.
 ///
 /// Pending nodes are kept on the heap, so the nesting depth of an
-/// archive cannot exhaust the stack.
+/// archive cannot exhaust the stack. A node with children is a
+/// directory and is rendered with a trailing `/`.
 fn render_tree(root: &TreeNode) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut pending: Vec<PendingNode> = Vec::new();
@@ -254,7 +405,10 @@ fn render_tree(root: &TreeNode) -> Vec<String> {
             true => "└── ",
             false => "├── ",
         };
-        let rendered = escape_path(Path::new(&current.node.name));
+        let mut rendered = escape_path(Path::new(&current.node.name));
+        if !current.node.children.is_empty() {
+            rendered.push('/');
+        }
         lines.push(format!("{}{connector}{rendered}", current.prefix));
         let child_prefix = format!(
             "{}{}",
