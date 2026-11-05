@@ -260,7 +260,7 @@ fn pack_overwrites_existing_regular_archive() {
     create_dir(&target);
     let archive = target.join(BAD_ARCHIVE);
     write_file(&archive, "stale\n");
-    let command = PackCommand::new(source, target);
+    let command = PackCommand::new(source, target.clone());
     let result = command.run();
     match result {
         Ok(()) => {}
@@ -272,6 +272,69 @@ fn pack_overwrites_existing_regular_archive() {
         Err(error) => panic!("failed to read the archive: {error}"),
     };
     assert!(written.starts_with(b"PK".as_slice()));
+    assert_no_temp_files(&target);
+}
+
+#[cfg(unix)]
+#[test]
+fn pack_failure_keeps_previous_archive_intact() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let target = root.path().join("target");
+    create_dir(&target);
+    let archive = target.join(BAD_ARCHIVE);
+    write_file(&archive, "previous archive\n");
+    // The second dist file is validated without being read, so it
+    // passes collection and only fails when its content is streamed.
+    let locked = source.join("dist").join("locked.ts");
+    write_file(&locked, "// content that cannot be opened\n");
+    let permitted = fs::Permissions::from_mode(0o000);
+    let locked_permissions = fs::set_permissions(&locked, permitted);
+    match locked_permissions {
+        Ok(()) => {}
+        Err(error) => panic!("failed to lock the source file: {error}"),
+    }
+    let error = pack_error(&source, &target);
+    let message = match error {
+        Error::Runtime(value) => value,
+        other => panic!("unexpected error: {other}"),
+    };
+    assert!(
+        message.contains(&format!("failed to read {}", locked.display())),
+        "unexpected error: {message}"
+    );
+    let content = fs::read(&archive);
+    let kept = match content {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read the archive: {error}"),
+    };
+    assert_eq!(kept.as_slice(), b"previous archive\n".as_slice());
+    assert_no_temp_files(&target);
+}
+
+#[test]
+fn pack_clears_a_leftover_temporary_file() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let target = root.path().join("target");
+    create_dir(&target);
+    let archive = target.join(BAD_ARCHIVE);
+    let stale =
+        target.join(format!("{BAD_ARCHIVE}.tmp-{}", std::process::id()));
+    write_file(&stale, "stale leftover\n");
+    let command = PackCommand::new(source, target.clone());
+    let result = command.run();
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("pack failed: {error}"),
+    }
+    assert!(archive.is_file());
+    assert!(!stale.exists());
+    assert_no_temp_files(&target);
 }
 
 #[test]
@@ -502,6 +565,34 @@ fn archive_entry_names(archive: &Path) -> Vec<String> {
         names.push(String::from(name));
     }
     return names;
+}
+
+/// Assert that the target directory holds no leftover `.tmp-` file.
+fn assert_no_temp_files(target: &Path) {
+    let listed = fs::read_dir(target);
+    let reads = match listed {
+        Ok(value) => value,
+        Err(error) => {
+            panic!("failed to read {}: {error}", target.display());
+        }
+    };
+    for entry in reads {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(error) => {
+                panic!(
+                    "failed to read an entry of {}: {error}",
+                    target.display()
+                );
+            }
+        };
+        let name = entry.file_name();
+        let rendered = String::from(name.to_string_lossy());
+        assert!(
+            !rendered.contains(".tmp-"),
+            "leftover temporary file: {rendered}"
+        );
+    }
 }
 
 /// Run `pack` and return the error it must produce.
