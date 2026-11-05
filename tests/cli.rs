@@ -142,6 +142,27 @@ fn pack_unknown_argument_reports_cli_error() {
 }
 
 #[test]
+fn pack_unknown_argument_does_not_escape_backslashes() {
+    let output = run(&["pack", "--bogus\\path"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(
+        "Unknown argument: --bogus\\path. Run 'van pack --help' for usage."
+    ));
+}
+
+#[test]
+fn pack_unknown_argument_escapes_control_characters() {
+    let output = run(&["pack", "bad\u{1b}[31m\nspoofed"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains('\u{1b}'));
+    assert_eq!(stderr.lines().count(), 1);
+    assert!(stderr.contains("\\u{1b}"));
+    assert!(stderr.contains("\\n"));
+}
+
+#[test]
 fn pack_missing_arguments_reports_cli_error() {
     let output = run(&["pack", "--source", "examples/test-plugin"]);
     assert_eq!(output.status.code(), Some(1));

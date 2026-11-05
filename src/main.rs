@@ -9,6 +9,7 @@ use vantools::common::cli::{
 };
 use vantools::common::command::Command;
 use vantools::common::output::write_line;
+use vantools::common::validation::escape_text;
 use vantools::common::{Error, VanError};
 use vantools::pack::PackCommand;
 use vantools::van;
@@ -123,7 +124,7 @@ fn run_pack(arguments: &[String]) -> Result<(), Error> {
 
 /// Build the error for an argument the `pack` command does not accept.
 fn unknown_argument(argument: &str) -> Error {
-    let rendered = argument.escape_debug();
+    let rendered = escape_text(argument);
     return Error::CliError(format!(
         "Unknown argument: {rendered}. Run 'van pack --help' for usage."
     ));
