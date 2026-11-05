@@ -63,29 +63,23 @@ struct ArchiveEntry {
     source_path: PathBuf,
 }
 
+/// Everything a validated source directory contributes to the archive.
+struct CollectedPack {
+    /// The parsed and validated `manifest.json`.
+    manifest: Manifest,
+    /// The exact manifest bytes that passed validation.
+    manifest_bytes: Vec<u8>,
+    /// The files scheduled for the archive, in walk order.
+    entries: Vec<ArchiveEntry>,
+    /// The source files the archive layout excludes.
+    ignored: Vec<PathBuf>,
+}
+
 impl Command for PackCommand {
     fn run(&self) -> Result<(), Error> {
-        let manifest_path = self.source.join(MANIFEST_FILE_NAME);
-        let dist_path = self.source.join(DIST_DIRECTORY_NAME);
-        require_directory(&self.source, "source directory")?;
-        require_file(&manifest_path, MANIFEST_FILE_NAME)?;
-        validate_file_type(&manifest_path)?;
-        require_dist_directory(&self.source, &dist_path)?;
-        validate_file_type(&dist_path)?;
-        let loaded = Manifest::from_dir_with_bytes(&self.source)?;
-        let (manifest, manifest_bytes) = loaded;
-        require_entrypoint(&dist_path, &manifest.entrypoint)?;
-        let mut entries: Vec<ArchiveEntry> = Vec::new();
-        collect_entries(&dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
-        let mut ignored: Vec<PathBuf> = Vec::new();
-        collect_ignored(&self.source, &mut ignored)?;
-        self.ensure_target()?;
-        let archive_path = self.archive_path(&manifest);
-        warn_if_overwriting(&archive_path)?;
-        write_archive(&archive_path, &manifest_bytes, &entries)?;
-        ignored.sort();
-        let files_written = entries.len() + 1;
-        return report_success(&archive_path, files_written, &ignored);
+        let dist_path = self.validate_layout()?;
+        let collected = self.collect_pack(&dist_path)?;
+        return self.write_collected(collected);
     }
 }
 
@@ -123,6 +117,66 @@ impl PackCommand {
                 escape_path(&self.target)
             ))),
         };
+    }
+
+    /// Validate the source layout and return the `dist` directory.
+    ///
+    /// This covers the first phase of a pack run: the source directory,
+    /// its `manifest.json`, and its `dist/` directory must all exist,
+    /// each as a regular directory or file rather than a symlink. The
+    /// checks run in this fixed order so the first failure is always the
+    /// same error, with the same type and path, as before.
+    fn validate_layout(&self) -> Result<PathBuf, Error> {
+        let manifest_path = self.source.join(MANIFEST_FILE_NAME);
+        let dist_path = self.source.join(DIST_DIRECTORY_NAME);
+        require_directory(&self.source, "source directory")?;
+        require_file(&manifest_path, MANIFEST_FILE_NAME)?;
+        validate_file_type(&manifest_path)?;
+        require_dist_directory(&self.source, &dist_path)?;
+        validate_file_type(&dist_path)?;
+        return Ok(dist_path);
+    }
+
+    /// Load the manifest and collect everything an archive will contain.
+    ///
+    /// The manifest is read and validated, the entrypoint is checked
+    /// against `dist`, then the walk collects the archive entries and
+    /// the ignored paths into a [`CollectedPack`].
+    fn collect_pack(&self, dist_path: &Path) -> Result<CollectedPack, Error> {
+        let loaded = Manifest::from_dir_with_bytes(&self.source)?;
+        let (manifest, manifest_bytes) = loaded;
+        require_entrypoint(dist_path, &manifest.entrypoint)?;
+        let mut entries: Vec<ArchiveEntry> = Vec::new();
+        collect_entries(dist_path, DIST_DIRECTORY_NAME, &mut entries)?;
+        let mut ignored: Vec<PathBuf> = Vec::new();
+        collect_ignored(&self.source, &mut ignored)?;
+        return Ok(CollectedPack {
+            manifest,
+            manifest_bytes,
+            entries,
+            ignored,
+        });
+    }
+
+    /// Prepare the target, write the archive, and report the result.
+    ///
+    /// This covers the final phase of a pack run: the target directory
+    /// is created, an existing archive is warned about, the archive is
+    /// written, and the ignored paths are sorted for the summary.
+    fn write_collected(&self, collected: CollectedPack) -> Result<(), Error> {
+        let CollectedPack {
+            manifest,
+            manifest_bytes,
+            entries,
+            ignored: mut source_ignored,
+        } = collected;
+        self.ensure_target()?;
+        let archive_path = self.archive_path(&manifest);
+        warn_if_overwriting(&archive_path)?;
+        write_archive(&archive_path, &manifest_bytes, &entries)?;
+        source_ignored.sort();
+        let files_written = entries.len() + 1;
+        return report_success(&archive_path, files_written, &source_ignored);
     }
 }
 
