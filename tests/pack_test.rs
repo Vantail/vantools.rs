@@ -171,10 +171,10 @@ fn pack_escapes_control_characters_in_source_file_names() {
         other => panic!("unexpected error: {other}"),
     };
     // The control character must be rendered as an escape, never emitted
-    // raw, and the backslash must be doubled so the name stays on one line.
+    // raw, while printable characters such as the backslash stay as is.
     assert!(!message.contains('\u{1b}'));
     assert!(message.contains("\\u{1b}"));
-    assert!(message.contains("a\\\\b"));
+    assert!(message.contains("a\\b"));
     assert!(!target.join(BAD_ARCHIVE).exists());
 }
 
@@ -318,9 +318,7 @@ fn validate_archive_entry_rejects_backslashes() {
     let error = entry_error("dist\\app.ts");
     assert_validation_message(
         error,
-        // The backslash is escaped by the diagnostic, so it renders as two
-        // backslashes instead of passing through raw.
-        "Backslashes are not allowed in paths: dist\\\\app.ts",
+        "Backslashes are not allowed in paths: dist\\app.ts",
     );
 }
 

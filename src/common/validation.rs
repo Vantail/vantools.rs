@@ -127,12 +127,21 @@ pub fn escape_text(text: &str) -> String {
 
 /// Escape a value so that it cannot break a diagnostic across lines.
 ///
-/// Control characters and backslashes are rendered as visible escapes,
-/// matching the `Debug` representation of a string. Printable
-/// characters, including grapheme-extended ones, are left unchanged.
+/// Only control characters are escaped, one character at a time. A name
+/// therefore cannot split the line or carry terminal escape sequences,
+/// while printable characters, including path separators, are left
+/// unchanged so that paths stay readable on every platform.
 fn escape_line(text: &str) -> String {
-    let escaped = text.escape_debug();
-    return format!("{escaped}");
+    let mut rendered = String::new();
+    for character in text.chars() {
+        if character.is_control() {
+            let escaped = character.escape_debug().to_string();
+            rendered.push_str(&escaped);
+            continue;
+        }
+        rendered.push(character);
+    }
+    return rendered;
 }
 
 /// Returns true when the path is absolute, has a drive letter, or has
