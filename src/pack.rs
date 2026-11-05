@@ -394,18 +394,53 @@ fn copy_stream(
     }
 }
 
+/// A directory that the walk still has to read, with its archive
+/// prefix.
+struct PendingDirectory {
+    /// Path of the directory on disk.
+    path: PathBuf,
+    /// Prefix the archive names of its entries are built from.
+    prefix: String,
+}
+
 /// Validate and collect every file below `directory` under `prefix`.
+///
+/// Directories waiting to be read are kept in a `Vec` on the heap and
+/// visited in a loop, so the nesting depth of the source tree cannot
+/// exhaust the stack.
 fn collect_entries(
     directory: &Path,
     prefix: &str,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), Error> {
-    let read = match fs::read_dir(directory) {
+    let mut pending: Vec<PendingDirectory> = Vec::new();
+    pending.push(PendingDirectory {
+        path: directory.to_path_buf(),
+        prefix: String::from(prefix),
+    });
+    loop {
+        let next = pending.pop();
+        let current = match next {
+            None => break,
+            Some(value) => value,
+        };
+        walk_directory(&current, &mut pending, entries)?;
+    }
+    return Ok(());
+}
+
+/// Read one directory, queueing its subdirectories and collecting files.
+fn walk_directory(
+    current: &PendingDirectory,
+    pending: &mut Vec<PendingDirectory>,
+    entries: &mut Vec<ArchiveEntry>,
+) -> Result<(), Error> {
+    let read = match fs::read_dir(&current.path) {
         Ok(value) => value,
         Err(error) => {
             return Err(Error::Runtime(format!(
                 "failed to read directory {}: {error}",
-                directory.display()
+                current.path.display()
             )));
         }
     };
@@ -418,19 +453,25 @@ fn collect_entries(
             Some(Err(error)) => {
                 return Err(Error::Runtime(format!(
                     "failed to read an entry of {}: {error}",
-                    directory.display()
+                    current.path.display()
                 )));
             }
         };
-        collect_entry(&entry, prefix, entries)?;
+        walk_entry(&entry, current, pending, entries)?;
     }
     return Ok(());
 }
 
-/// Validate one directory entry and queue it, recursing into directories.
-fn collect_entry(
+/// Validate one directory entry, queueing directories and collecting
+/// files.
+///
+/// The recursion of this walk lives in the `pending` queue rather than
+/// in the call stack, so nesting depth is bounded by available memory
+/// instead of by the stack size.
+fn walk_entry(
     entry: &fs::DirEntry,
-    prefix: &str,
+    current: &PendingDirectory,
+    pending: &mut Vec<PendingDirectory>,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), Error> {
     let entry_path = entry.path();
@@ -448,7 +489,7 @@ fn collect_entry(
     // appended to the already validated prefix, and
     // `validate_archive_entry` rejects any backslash, so the separator
     // never depends on the host platform.
-    let archive_name = format!("{prefix}/{file_name}");
+    let archive_name = format!("{}/{}", current.prefix, file_name);
     validate_no_node_modules(Path::new(&archive_name))?;
     validate_archive_entry(&archive_name)?;
     let file_type = match entry.file_type() {
@@ -461,7 +502,11 @@ fn collect_entry(
         }
     };
     if file_type.is_dir() {
-        return collect_entries(&entry_path, &archive_name, entries);
+        pending.push(PendingDirectory {
+            path: entry_path,
+            prefix: archive_name,
+        });
+        return Ok(());
     }
     if file_type.is_file() {
         entries.push(ArchiveEntry {
