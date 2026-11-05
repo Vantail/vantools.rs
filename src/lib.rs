@@ -1,7 +1,8 @@
-//! PLACEHOLDER
+//! Command-line toolset for working with `.van` plugin archives.
 //!
-//! See `docs/RUST_GUIDELINES.md` for the coding rules enforced in this
-//! crate.
+//! The crate builds a single binary named `van`. It dispatches
+//! subcommands in [`van`] and implements the `pack` subcommand in
+//! [`pack`]; shared types and helpers live in [`common`].
 
 #![forbid(unsafe_code)]
 
