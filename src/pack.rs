@@ -287,8 +287,23 @@ fn require_dist_directory(
 /// The `entrypoint` is validated as a relative archive path when the
 /// manifest is read, so joining it onto `dist_path` cannot escape the
 /// `dist` directory.
+///
+/// A symlink at the entrypoint path is refused instead of followed, so
+/// the dedicated check enforces the no-symlink policy itself instead of
+/// relying on the later `dist/` walk. The link is rejected with the
+/// same diagnostic [`validate_file_type`] uses for `dist/` and its
+/// contents. A missing or non-regular path, such as a directory or a
+/// FIFO, is reported as missing because the entrypoint must be a
+/// regular file.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symlinked, non-regular, or
+/// missing entrypoint, and [`Error::Runtime`] when the path cannot be
+/// inspected.
 fn require_entrypoint(dist_path: &Path, entrypoint: &str) -> Result<(), Error> {
     let entrypoint_path = dist_path.join(entrypoint);
+    refuse_symlink(&entrypoint_path)?;
     if entrypoint_path.is_file() {
         return Ok(());
     }

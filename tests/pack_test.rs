@@ -204,6 +204,60 @@ fn pack_rejects_symlinks() {
 
 #[cfg(unix)]
 #[test]
+fn pack_rejects_symlinked_entrypoint() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    // A file outside `dist/` must not be reachable through the
+    // entrypoint, which would otherwise be followed by the check.
+    let outside = root.path().join("outside.ts");
+    write_file(&outside, "// entrypoint outside dist\n");
+    let entrypoint = source.join("dist").join("app.ts");
+    remove_entrypoint_file(&entrypoint);
+    let linked = symlink(&outside, &entrypoint);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        entrypoint.display()
+    );
+    assert_validation_message(error, &expected);
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn pack_rejects_dangling_symlinked_entrypoint() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_source(&source);
+    let entrypoint = source.join("dist").join("app.ts");
+    remove_entrypoint_file(&entrypoint);
+    let linked = symlink("missing.ts", &entrypoint);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        entrypoint.display()
+    );
+    assert_validation_message(error, &expected);
+    assert!(!target.join(BAD_ARCHIVE).exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn pack_refuses_to_overwrite_symlinked_archive() {
     use std::os::unix::fs::symlink;
 
@@ -642,6 +696,20 @@ fn assert_no_temp_files(target: &Path) {
             !rendered.contains(".tmp-"),
             "leftover temporary file: {rendered}"
         );
+    }
+}
+
+/// Remove the regular entrypoint file so a test can replace it.
+///
+/// The helper is only for tests that put a symlink at the entrypoint
+/// path, which `create_source` writes as a regular file.
+fn remove_entrypoint_file(entrypoint: &Path) {
+    let removed = fs::remove_file(entrypoint);
+    match removed {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to remove {}: {error}", entrypoint.display());
+        }
     }
 }
 
