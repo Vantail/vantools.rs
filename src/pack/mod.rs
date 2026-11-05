@@ -18,6 +18,7 @@ use crate::common::validation::{
     validate_no_node_modules,
 };
 use crate::common::walk::{WalkEntry, walk_tree};
+use crate::tui::progress::show_progress;
 
 mod cli;
 mod writer;
@@ -84,6 +85,7 @@ struct CollectedPack {
 
 impl Command for PackCommand {
     fn run(&self) -> Result<(), Error> {
+        show_progress();
         let dist_path = self.validate_layout()?;
         let collected = self.collect_pack(&dist_path)?;
         return self.write_collected(collected);

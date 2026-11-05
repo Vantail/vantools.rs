@@ -24,6 +24,7 @@ use crate::common::output::{write_line, write_text};
 use crate::common::validation::{
     escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
 };
+use crate::tui::progress::show_progress;
 
 mod cli;
 
@@ -85,6 +86,7 @@ struct PendingNode<'a> {
 
 impl Command for VerifyCommand {
     fn run(&self) -> Result<(), Error> {
+        show_progress();
         let check = self.inspect()?;
         return print_report(&self.source, &check);
     }
