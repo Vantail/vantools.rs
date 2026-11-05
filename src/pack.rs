@@ -570,7 +570,8 @@ fn build_archive(
 ///
 /// The rename replaces an existing regular archive in one step, so the
 /// destination never holds a truncated archive while a run is writing.
-/// On failure the temporary file is removed so the target directory
+/// When the temporary path was swapped for a non-regular entry, or the
+/// rename fails, the temporary path is removed so the target directory
 /// keeps no debris and an existing archive stays untouched.
 ///
 /// # Errors
@@ -583,7 +584,25 @@ fn install_archive(temp_path: &Path, archive_path: &Path) -> Result<(), Error> {
     // writable by whoever can write the archive. An entry swapped in
     // during the write-to-rename window is refused rather than moved
     // over the archive path, mirroring the refusal at that path.
-    refuse_non_regular_archive(temp_path)?;
+    let checked = refuse_non_regular_archive(temp_path);
+    return match checked {
+        Ok(()) => rename_over(temp_path, archive_path),
+        Err(error) => {
+            discard_temp_file(temp_path);
+            return Err(error);
+        }
+    };
+}
+
+/// Rename the checked temporary archive over its final path.
+///
+/// On failure the temporary file is removed so a failed run never
+/// leaves temporary debris behind.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the rename fails.
+fn rename_over(temp_path: &Path, archive_path: &Path) -> Result<(), Error> {
     let renamed = fs::rename(temp_path, archive_path);
     return match renamed {
         Ok(()) => Ok(()),
