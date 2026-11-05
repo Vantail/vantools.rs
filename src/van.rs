@@ -4,6 +4,7 @@ use std::io;
 
 use crate::common::cli::{collect_arguments, version_line};
 use crate::common::output::{write_line, write_text};
+use crate::common::validation::escape_text;
 use crate::common::{Error, Result};
 
 /// Help text shared by `--help` and the missing-subcommand path.
@@ -16,7 +17,7 @@ Options:
 ";
 
 /// Maximum number of argument characters echoed in a diagnostic.
-pub const MAX_ECHO_CHARS: usize = 64;
+pub use crate::common::validation::MAX_ECHO_CHARS;
 
 /// Parse the process arguments and dispatch a subcommand.
 ///
@@ -81,19 +82,13 @@ where
 
 /// Render an unknown subcommand as a safe single-line diagnostic.
 ///
-/// The argument is limited to [`MAX_ECHO_CHARS`] characters so that a very
-/// long value cannot flood the terminal, and control characters are escaped
-/// so that the message cannot inject terminal sequences or forge lines.
+/// The argument is rendered with [`escape_text`]: it is limited to
+/// [`MAX_ECHO_CHARS`] characters so that a very long value cannot flood
+/// the terminal, and control characters are escaped so that the message
+/// cannot inject terminal sequences or forge lines.
 pub fn format_unknown_subcommand(argument: &str) -> String {
-    let mut limited = String::new();
-    for (index, character) in argument.chars().enumerate() {
-        if index >= MAX_ECHO_CHARS {
-            break;
-        }
-        limited.push(character);
-    }
-    let escaped = limited.escape_debug();
-    return format!("unknown subcommand '{escaped}'");
+    let rendered = escape_text(argument);
+    return format!("unknown subcommand '{rendered}'");
 }
 
 /// Write the version banner to stdout.

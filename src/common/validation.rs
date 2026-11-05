@@ -17,6 +17,20 @@ use crate::common::Error;
 /// Directory name that archives must not contain at any depth.
 const FORBIDDEN_DIRECTORY: &str = "node_modules";
 
+/// Largest number of characters of an untrusted value echoed in a
+/// diagnostic.
+///
+/// Validation and CLI errors interpolate untrusted values, such as a raw
+/// command line argument or a manifest `name` member, into their text.
+/// Capping the rendered value keeps an oversized but legal value from
+/// flooding the terminal or CI log with printable garbage, matching the
+/// bound the `van` dispatcher already applies. Truncated values are
+/// marked with [`ELLIPSIS`].
+pub const MAX_ECHO_CHARS: usize = 64;
+
+/// Marker appended to a rendered untrusted value that was truncated.
+const ELLIPSIS: &str = "...";
+
 /// Validates a raw relative archive entry path.
 ///
 /// Rejects backslashes, absolute paths, drive letters, empty path
@@ -134,13 +148,32 @@ pub fn escape_path(path: &Path) -> String {
 }
 
 /// Renders an untrusted name or manifest value as a single printable
-/// line.
+/// line, limited to [`MAX_ECHO_CHARS`] characters.
 ///
-/// Use this for values that are not file system paths, such as the
-/// manifest `name`, `version`, and `entrypoint` members, which are
-/// echoed in diagnostics.
+/// The value is limited to [`MAX_ECHO_CHARS`] characters before it is
+/// escaped, and a truncated value ends with [`ELLIPSIS`]. Control
+/// characters cannot therefore split the line or inject terminal escape
+/// sequences, and a very long value cannot flood the terminal or a CI
+/// log with printable garbage.
+///
+/// Use this for values that are not file system paths, such as raw
+/// command line arguments and the manifest `name`, `version`, and
+/// `entrypoint` members, which are echoed in diagnostics.
 pub fn escape_text(text: &str) -> String {
-    return escape_line(text);
+    let mut limited = String::new();
+    let mut truncated = false;
+    for (index, character) in text.chars().enumerate() {
+        if index >= MAX_ECHO_CHARS {
+            truncated = true;
+            break;
+        }
+        limited.push(character);
+    }
+    let escaped = escape_line(&limited);
+    return match truncated {
+        true => format!("{escaped}{ELLIPSIS}"),
+        false => escaped,
+    };
 }
 
 /// Escape a value so that it cannot break a diagnostic across lines.
