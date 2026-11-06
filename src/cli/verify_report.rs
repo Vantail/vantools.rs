@@ -14,47 +14,54 @@ use vantools::common::validation::{escape_manifest, escape_path, escape_text};
 use vantools::verify::VerifyReport;
 
 use super::output::{write_line, write_text};
+use super::tui::log::{log_ok, log_start};
 use super::tui::tree::render_tree_lines;
 
 /// Print the result of a successful verification.
 ///
-/// The collected entry names are sorted in place by the tree renderer,
-/// so the report never holds a second copy of them.
+/// The header and the verdict go through the log helpers, so they match
+/// the decorated look of the rest of the CLI. The structured blocks in
+/// between keep their own layout, because the manifest and the tree are
+/// multi-line by nature. The collected entry names are sorted in place
+/// by the tree renderer, so the report never holds a second copy of
+/// them.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Runtime`] when stdout cannot be written.
 pub fn print_report(report: &mut VerifyReport) -> Result<(), Error> {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
     let label = archive_label(&report.source);
-    let header = format!("Verifying archive: {label}");
-    write_line(&mut handle, &header, "output")?;
-    write_line(
-        &mut handle,
-        "  [OK] Paths and ZIP structure are valid.",
-        "output",
-    )?;
-    write_line(
-        &mut handle,
-        "  [OK] manifest.json is present and valid.",
-        "output",
-    )?;
-    let entrypoint = escape_text(&report.manifest.entrypoint);
-    let entrypoint_line =
-        format!("  [OK] dist/ and entrypoint ({entrypoint}) are present.");
-    write_line(&mut handle, &entrypoint_line, "output")?;
-    write_line(&mut handle, "", "output")?;
-    write_line(&mut handle, "--- manifest.json ---", "output")?;
-    write_manifest(&mut handle, &report.manifest_bytes)?;
-    write_line(&mut handle, "---------------------", "output")?;
-    write_line(&mut handle, "", "output")?;
-    write_line(&mut handle, "Archive Contents:", "output")?;
-    for line in render_tree_lines(&mut report.entry_names) {
-        write_line(&mut handle, &line, "output")?;
+    log_start(&format!("Verifying archive: {label}"));
+    {
+        let stdout = io::stdout();
+        let mut handle = stdout.lock();
+        write_line(
+            &mut handle,
+            "  [OK] Paths and ZIP structure are valid.",
+            "output",
+        )?;
+        write_line(
+            &mut handle,
+            "  [OK] manifest.json is present and valid.",
+            "output",
+        )?;
+        let entrypoint = escape_text(&report.manifest.entrypoint);
+        let entrypoint_line =
+            format!("  [OK] dist/ and entrypoint ({entrypoint}) are present.");
+        write_line(&mut handle, &entrypoint_line, "output")?;
+        write_line(&mut handle, "", "output")?;
+        write_line(&mut handle, "--- manifest.json ---", "output")?;
+        write_manifest(&mut handle, &report.manifest_bytes)?;
+        write_line(&mut handle, "---------------------", "output")?;
+        write_line(&mut handle, "", "output")?;
+        write_line(&mut handle, "Archive Contents:", "output")?;
+        for line in render_tree_lines(&mut report.entry_names) {
+            write_line(&mut handle, &line, "output")?;
+        }
+        write_line(&mut handle, "", "output")?;
     }
-    write_line(&mut handle, "", "output")?;
-    return write_line(&mut handle, "Archive is valid.", "output");
+    log_ok("Archive is valid.", "");
+    return Ok(());
 }
 
 /// Print the manifest bytes, ending with one newline.

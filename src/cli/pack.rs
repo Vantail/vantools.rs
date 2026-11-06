@@ -9,6 +9,8 @@ use vantools::common::validation::{escape_path, escape_text};
 use vantools::pack::{PackCommand, PackReport};
 
 use super::output::write_line;
+use super::tui::log::{log_info, log_ok, log_warn};
+use super::tui::logo::print_logo;
 use super::tui::progress::show_progress;
 
 /// Source flag of the `pack` subcommand.
@@ -146,9 +148,9 @@ fn print_pack_help() -> Result<(), Error> {
 /// Resolve the required flags and run the `pack` command.
 ///
 /// The source flag is reported as missing before the target flag, the
-/// same order the flat resolution used. The progress animation runs
-/// after the flags were accepted, so the help and version output stays
-/// untouched.
+/// same order the flat resolution used. The banner and the progress bar
+/// run after the flags were accepted, so the help and version output
+/// stays untouched.
 fn run_pack_command(
     source: Option<PathBuf>,
     target: Option<PathBuf>,
@@ -162,58 +164,37 @@ fn run_pack_command(
         None => return Err(missing_arguments()),
     };
     let command = PackCommand::new(resolved_source, resolved_target.clone());
+    print_logo();
     show_progress();
     let report = command.run()?;
-    return print_report(&report, &resolved_target);
+    print_report(&report, &resolved_target);
+    return Ok(());
 }
 
 /// Print the report of a completed pack.
 ///
 /// The lines keep the order the command produced them before the
 /// reports existed: the notice about a created target directory, the
-/// warning about an existing archive, then the success summary.
-///
-/// # Errors
-///
-/// Returns [`Error::Runtime`] when stdout or stderr cannot be written.
-fn print_report(report: &PackReport, target: &Path) -> Result<(), Error> {
+/// warning about an existing archive, then the success summary. Every
+/// interpolated path is escaped like any other diagnostic.
+fn print_report(report: &PackReport, target: &Path) {
     if report.target_created {
-        let notice =
-            format!("created target directory: {}", escape_path(target));
-        print_line(&notice)?;
+        log_info("created target directory", &escape_path(target));
     }
     if report.overwrote_existing {
-        let warning = format!(
-            "Warning: Overwriting existing archive: {}",
-            escape_path(&report.archive_path)
+        log_warn(
+            "Warning: Overwriting existing archive",
+            &escape_path(&report.archive_path),
         );
-        print_warning(&warning)?;
     }
-    let summary = success_message(report);
-    return print_line(&summary);
-}
-
-/// Build the summary of a completed pack.
-///
-/// The summary names the archive, counts the files written, and lists
-/// the source files the layout excluded. Every interpolated path is
-/// escaped like any other diagnostic.
-fn success_message(report: &PackReport) -> String {
-    let mut message = format!(
-        "Successfully created archive: {}\nFiles written: {}",
-        escape_path(&report.archive_path),
-        report.files_written
-    );
+    log_ok("Successfully created archive", &escape_path(&report.archive_path));
+    log_info("Files written", &report.files_written.to_string());
     let ignored_count = report.ignored_files.len();
-    message.push_str(&format!("\nFiles ignored: {ignored_count}"));
-    if !report.ignored_files.is_empty() {
-        message.push_str("\nIgnored paths:");
-        for relative in &report.ignored_files {
-            let rendered = escape_path(relative);
-            message.push_str(&format!("\n  - {rendered}"));
-        }
+    log_info("Files ignored", &ignored_count.to_string());
+    for relative in &report.ignored_files {
+        log_info("Ignored path", &escape_path(relative));
     }
-    return message;
+    return;
 }
 
 /// Build the error for an argument the `pack` command does not accept.
@@ -236,13 +217,6 @@ fn print_line(text: &str) -> Result<(), Error> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     return write_line(&mut handle, text, "output");
-}
-
-/// Print one warning line to stderr.
-fn print_warning(text: &str) -> Result<(), Error> {
-    let stderr = io::stderr();
-    let mut handle = stderr.lock();
-    return write_line(&mut handle, text, "warning");
 }
 
 /// Print the version banner (`van <crate-version>`) to stdout.

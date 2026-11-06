@@ -1,9 +1,8 @@
 //! CLI entry point for the `van` package and plugin manager.
 
-use std::io;
 use std::process::ExitCode;
 
-use vantools::common::cli::{collect_arguments, report_error, to_exit_code};
+use vantools::common::cli::{collect_arguments, to_exit_code};
 use vantools::common::{Error, VanError};
 use vantools::van;
 
@@ -23,9 +22,10 @@ fn main() -> ExitCode {
         }
         Err(error) => error,
     };
-    let stderr = io::stderr();
-    let mut handle = stderr.lock();
-    report_error(&mut handle, &error);
+    // The rendered error already starts with `error: `, so it becomes
+    // the log message rather than repeating that prefix as a value.
+    let message = format!("{error}");
+    cli::tui::log::log_err(&message, "");
     let code: i32 = error.exit_code();
     return ExitCode::from(to_exit_code(code));
 }

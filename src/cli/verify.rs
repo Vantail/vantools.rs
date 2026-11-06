@@ -9,6 +9,7 @@ use vantools::common::validation::escape_text;
 use vantools::verify::VerifyCommand;
 
 use super::output::write_line;
+use super::tui::logo::print_logo;
 use super::tui::progress::show_progress;
 use super::verify_report::print_report;
 
@@ -131,14 +132,15 @@ fn print_verify_help() -> Result<(), Error> {
 
 /// Resolve the required flag and run the `verify` command.
 ///
-/// The progress animation runs after the flag was accepted, so the help
-/// and version output stays untouched.
+/// The banner and the progress bar run after the flag was accepted, so
+/// the help and version output stays untouched.
 fn run_verify_command(source: Option<PathBuf>) -> Result<(), Error> {
     let resolved_source = match source {
         Some(value) => value,
         None => return Err(missing_arguments()),
     };
     let command = VerifyCommand::new(resolved_source);
+    print_logo();
     show_progress();
     let mut report = command.run()?;
     return print_report(&mut report);
