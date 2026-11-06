@@ -6,26 +6,19 @@
 //! segment is escaped so an untrusted name cannot emit terminal escape
 //! sequences.
 //!
-//! On a terminal, directory names are drawn in cyan and file names in
-//! white. The colors wrap the name only, so the connectors keep their
-//! exact positions and structure. A pipe, a file, or CI receives the
-//! tree without escape sequences.
+//! The listing starts at a `.` root node and every line carries the same
+//! indent, so the block lines up with the surrounding report. Names are
+//! rendered as plain text in the terminal's default color, which keeps
+//! the tree readable on any palette and, a pipe, a file, or CI receives
+//! the same text without escape sequences.
 
 use std::cmp::Ordering;
-use std::io;
-use std::io::IsTerminal;
 use std::path::Path;
 
 use vantools::common::validation::escape_path;
 
-/// ANSI SGR sequence for cyan, used for directory names.
-const DIRECTORY_COLOR: &str = "\x1b[36m";
-
-/// ANSI SGR sequence for white, used for file names.
-const FILE_COLOR: &str = "\x1b[37m";
-
-/// ANSI SGR sequence that resets every attribute.
-const RESET: &str = "\x1b[0m";
+/// Indentation prepended to every line of the tree.
+const TREE_INDENT: &str = "    ";
 
 /// One node of the rendered tree.
 struct TreeNode {
@@ -211,15 +204,17 @@ fn shared_segments(open: &[OpenDirectory], segments: &[&str]) -> usize {
 
 /// Render the tree below `root` as one line per node.
 ///
-/// Pending nodes are kept on the heap, so the nesting depth of an
-/// archive cannot exhaust the stack. A node with children is a
-/// directory and is rendered with a trailing `/`. Names are colorized
-/// only when stdout is a terminal, so piped output stays plain.
+/// The listing opens with a `.` root node, because the entries belong to
+/// the archive as a whole and not to any directory inside it. Pending
+/// nodes are kept on the heap, so the nesting depth of an archive cannot
+/// exhaust the stack. A node with children is a directory and is
+/// rendered with a trailing `/`. Every line is indented by
+/// [`TREE_INDENT`] and drawn in the terminal's default color.
 fn render_tree(root: &TreeNode) -> Vec<String> {
-    let colored = io::stdout().is_terminal();
     let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("{TREE_INDENT}."));
     let mut pending: Vec<PendingNode> = Vec::new();
-    queue_children(root, "", &mut pending);
+    queue_children(root, TREE_INDENT, &mut pending);
     loop {
         let next = pending.pop();
         let current = match next {
@@ -230,15 +225,11 @@ fn render_tree(root: &TreeNode) -> Vec<String> {
             true => "└── ",
             false => "├── ",
         };
-        let mut rendered = escape_path(Path::new(&current.node.name));
+        let mut label = escape_path(Path::new(&current.node.name));
         let is_directory = !current.node.children.is_empty();
         if is_directory {
-            rendered.push('/');
+            label.push('/');
         }
-        let label = match colored {
-            true => colorize(&rendered, is_directory),
-            false => rendered,
-        };
         lines.push(format!("{}{connector}{label}", current.prefix));
         let child_prefix = format!(
             "{}{}",
@@ -250,18 +241,6 @@ fn render_tree(root: &TreeNode) -> Vec<String> {
         );
         queue_children(current.node, &child_prefix, &mut pending);
     }
-}
-
-/// Wrap one rendered name in the color of its kind.
-///
-/// Only the name is wrapped, so the connector and the indentation of the
-/// line keep the plain tree layout.
-fn colorize(text: &str, is_directory: bool) -> String {
-    let color = match is_directory {
-        true => DIRECTORY_COLOR,
-        false => FILE_COLOR,
-    };
-    return format!("{color}{text}{RESET}");
 }
 
 /// Queue the children of `node` so the first child is rendered first.

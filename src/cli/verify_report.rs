@@ -4,9 +4,9 @@
 //! invalid archive never produces a partial report. Every validation
 //! step goes through the log helpers, the manifest is re-serialized as
 //! indented JSON so it reads like a code block, and the tree renderer
-//! colorizes the entry names. Untrusted values, such as the manifest
-//! bytes and the entry names, are escaped before they reach the
-//! terminal.
+//! lists the entry names as a plain indented tree. Untrusted values,
+//! such as the manifest bytes and the entry names, are escaped before
+//! they reach the terminal.
 
 use std::io;
 use std::path::Path;
@@ -23,7 +23,7 @@ use super::tui::tree::render_tree_lines;
 /// Print the result of a successful verification.
 ///
 /// Each check is one log line, the manifest follows as an indented JSON
-/// block, and the archive contents trail as a colorized tree. The
+/// block, and the archive contents trail as an indented tree. The
 /// collected entry names are sorted in place by the tree renderer, so
 /// the report never holds a second copy of them.
 ///

@@ -362,9 +362,10 @@ fn verify_cli_prints_a_tree() {
     assert!(stdout.contains("\"name\": \"sample-plugin\""));
     assert!(!stdout.contains("\"name\":\"sample-plugin\""));
     assert!(stdout.contains("Archive Contents"));
-    assert!(stdout.contains("├── dist/"));
-    assert!(stdout.contains("│   └── app.ts"));
-    assert!(stdout.contains("└── manifest.json"));
+    assert!(stdout.contains("\n    .\n"));
+    assert!(stdout.contains("    ├── dist/"));
+    assert!(stdout.contains("    │   └── app.ts"));
+    assert!(stdout.contains("    └── manifest.json"));
     assert!(stdout.contains("Archive is valid."));
     // Piped output keeps the plain fallback: no colors, no log tags.
     assert!(!stdout.contains('\u{1b}'));
@@ -390,13 +391,14 @@ fn verify_cli_prints_a_tree_for_shared_directories() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let expected = concat!(
-        "\u{251c}\u{2500}\u{2500} dist/\n",
-        "\u{2502}   \u{251c}\u{2500}\u{2500} app.ts\n",
-        "\u{2502}   \u{2514}\u{2500}\u{2500} sub/\n",
-        "\u{2502}       \u{2514}\u{2500}\u{2500} deep.ts\n",
-        "\u{251c}\u{2500}\u{2500} dist-extra/\n",
-        "\u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
-        "\u{2514}\u{2500}\u{2500} manifest.json\n",
+        "    .\n",
+        "    \u{251c}\u{2500}\u{2500} dist/\n",
+        "    \u{2502}   \u{251c}\u{2500}\u{2500} app.ts\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} sub/\n",
+        "    \u{2502}       \u{2514}\u{2500}\u{2500} deep.ts\n",
+        "    \u{251c}\u{2500}\u{2500} dist-extra/\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
+        "    \u{2514}\u{2500}\u{2500} manifest.json\n",
     );
     assert!(stdout.contains(expected), "unexpected tree: {stdout}");
 }
@@ -420,11 +422,12 @@ fn verify_cli_reuses_a_directory_matching_an_entry_name() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let expected = concat!(
-        "\u{251c}\u{2500}\u{2500} dist/\n",
-        "\u{2502}   \u{2514}\u{2500}\u{2500} app.ts\n",
-        "\u{251c}\u{2500}\u{2500} dist-extra/\n",
-        "\u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
-        "\u{2514}\u{2500}\u{2500} manifest.json\n",
+        "    .\n",
+        "    \u{251c}\u{2500}\u{2500} dist/\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} app.ts\n",
+        "    \u{251c}\u{2500}\u{2500} dist-extra/\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
+        "    \u{2514}\u{2500}\u{2500} manifest.json\n",
     );
     assert!(stdout.contains(expected), "unexpected tree: {stdout}");
 }
