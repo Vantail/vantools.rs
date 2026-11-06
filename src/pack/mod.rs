@@ -114,7 +114,8 @@ impl PackCommand {
     ///
     /// A symlink at the target path is refused instead of followed, so
     /// the archive cannot land in a directory other than the one the
-    /// command named.
+    /// command named. The created path is escaped like every other
+    /// diagnostic, because the directory name is not trusted.
     fn ensure_target(&self) -> Result<(), Error> {
         refuse_symlink(&self.target)?;
         if self.target.is_dir() {
@@ -124,7 +125,7 @@ impl PackCommand {
         return match created {
             Ok(()) => notice(&format!(
                 "created target directory: {}",
-                self.target.display()
+                escape_path(&self.target)
             )),
             Err(error) => Err(Error::Runtime(format!(
                 "failed to create target directory {}: {error}",
