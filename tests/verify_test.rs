@@ -150,6 +150,37 @@ fn verify_accepts_regular_entries_with_permissions() {
 }
 
 #[test]
+fn verify_rejects_a_directory_source() {
+    let root = temp_root();
+    let archive = root.path().join("directory.van");
+    let created = fs::create_dir(&archive);
+    match created {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to create {}: {error}", archive.display());
+        }
+    }
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn verify_rejects_a_device_source() {
+    let archive = Path::new("/dev/null").to_path_buf();
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
 fn verify_rejects_corrupt_entry_data() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);

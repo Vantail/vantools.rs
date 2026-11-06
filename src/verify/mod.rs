@@ -8,8 +8,14 @@
 //! applies, and the `dist/` directory and its entrypoint must exist.
 //! A valid archive is reported with its manifest and its contents as a
 //! tree.
+//!
+//! The archive path itself must be a regular file. A symbolic link, a
+//! FIFO, or a device is refused before it is opened, because opening a
+//! FIFO blocks until a writer appears and a device can block or return
+//! unbounded data.
 
 use std::cmp::Ordering;
+use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Read;
@@ -85,11 +91,13 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// CRC-32 within the decompressed-size budgets, the archive must hold
 /// no more than the entry-count budget, the manifest must pass the
 /// same checks `pack` applies, and `dist/` must contain the manifest
-/// entrypoint. A valid archive is reported with its manifest and its
+/// entrypoint. The archive path itself must be a regular file, so a
+/// symbolic link, a FIFO, or a device is refused instead of being
+/// opened. A valid archive is reported with its manifest and its
 /// contents as a tree.
 #[non_exhaustive]
 pub struct VerifyCommand {
-    /// The `.van` archive to verify.
+    /// The `.van` archive to verify; must be a regular file.
     pub source: PathBuf,
 }
 
@@ -152,6 +160,7 @@ impl VerifyCommand {
     /// first failure ends the run, so an invalid archive is never
     /// partly reported.
     fn inspect(&self) -> Result<ArchiveCheck, Error> {
+        require_regular_source(&self.source)?;
         let file = match File::open(&self.source) {
             Ok(value) => value,
             Err(error) => {
@@ -271,6 +280,43 @@ impl VerifyCommand {
     }
 }
 
+/// Return an error unless the archive path is a regular file.
+///
+/// The path is inspected with [`fs::symlink_metadata`], so a symbolic
+/// link is seen as a link instead of being followed. The check runs
+/// before the path is opened, because a FIFO blocks the open until a
+/// writer appears and a device can block or return unbounded data.
+/// A missing path is left to [`File::open`], which reports it as a
+/// failed open like any other unreadable archive.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symbolic link and for any
+/// other non-regular file type, and [`Error::Runtime`] when the path
+/// cannot be inspected.
+fn require_regular_source(path: &Path) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path);
+    let metadata = match metadata {
+        Ok(value) => value,
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    if metadata.file_type().is_file() {
+        return Ok(());
+    }
+    return Err(Error::ValidationError(format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        escape_path(path)
+    )));
+}
+
 /// Read one entry to the end so its data and checksum are validated.
 ///
 /// `total_bytes` accumulates the decompressed size of every entry read
@@ -356,7 +402,7 @@ impl CliCommand for VerifyCommand {
     }
 
     fn help(&self) -> &'static str {
-        return "Usage: verify -s <source>\n\nOptions:\n  -s, --source <path>  The .van archive to verify\n  -h, --help           Print this help message\n  -v, --version        Print version information";
+        return "Usage: verify -s <source>\n\nOptions:\n  -s, --source <path>  The .van archive to verify (a regular file)\n  -h, --help           Print this help message\n  -v, --version        Print version information";
     }
 }
 
