@@ -40,6 +40,9 @@ const FILE_TYPE_MASK: u32 = 0o170000;
 /// File-type bits of a symbolic link in a Unix mode.
 const SYMLINK_FILE_TYPE: u32 = 0o120000;
 
+/// File-type bits of a regular file in a Unix mode.
+const REGULAR_FILE_TYPE: u32 = 0o100000;
+
 /// Size of the buffer used to read one archive entry.
 const COPY_BUFFER_BYTES: usize = 8 * 1024;
 
@@ -77,8 +80,8 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 ///
 /// Opens the archive at `source` and validates its structure without
 /// extracting it: every entry name must be a safe relative path, no
-/// entry may carry a `node_modules` component, no entry may be a
-/// symbolic link, every entry must decompress to bytes that match its
+/// entry may carry a `node_modules` component, every entry must be a
+/// regular file, every entry must decompress to bytes that match its
 /// CRC-32 within the decompressed-size budgets, the archive must hold
 /// no more than the entry-count budget, the manifest must pass the
 /// same checks `pack` applies, and `dist/` must contain the manifest
@@ -223,7 +226,7 @@ impl VerifyCommand {
             };
             validate_archive_entry(&name)?;
             validate_no_node_modules(Path::new(&name))?;
-            reject_symlink(&name, entry.unix_mode())?;
+            reject_non_regular(&name, entry.unix_mode())?;
             read_entry_data(&mut entry, &name, &self.source, &mut total_bytes)?;
             names.push(name);
         }
@@ -367,24 +370,43 @@ fn entry_present(names: &[String], expected: &str) -> bool {
     return false;
 }
 
-/// Return an error unless the entry mode marks a symbolic link.
+/// Return an error unless the entry mode marks a regular file.
 ///
 /// The mode comes from the ZIP external attributes and is absent for
 /// archives written on platforms without Unix modes, so a missing mode
-/// passes. Only the file-type bits are inspected: the permission bits
-/// of a regular entry are left alone.
-fn reject_symlink(name: &str, mode: Option<u32>) -> Result<(), Error> {
+/// passes, as does a mode that carries no file-type bits: without a
+/// declared type the entry is a regular file, which is what every other
+/// rule requires. Only the file-type bits are inspected, so the
+/// permission bits of a regular entry are left alone.
+///
+/// A symbolic link keeps its own diagnostic because it is the most
+/// common non-regular entry. Every other type, such as a directory or a
+/// device, is rejected as well, so an entry the archive format does not
+/// permit cannot pass by satisfying a name check.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symbolic link and for any
+/// other non-regular file type.
+fn reject_non_regular(name: &str, mode: Option<u32>) -> Result<(), Error> {
     let mode = match mode {
         Some(value) => value,
         None => return Ok(()),
     };
-    if mode & FILE_TYPE_MASK == SYMLINK_FILE_TYPE {
+    let file_type = mode & FILE_TYPE_MASK;
+    if file_type == SYMLINK_FILE_TYPE {
         return Err(Error::ValidationError(format!(
             "Symlinks are not allowed in the archive: {}",
             escape_text(name)
         )));
     }
-    return Ok(());
+    if file_type == 0 || file_type == REGULAR_FILE_TYPE {
+        return Ok(());
+    }
+    return Err(Error::ValidationError(format!(
+        "Non-regular files are not allowed in the archive: {}",
+        escape_text(name)
+    )));
 }
 
 /// Return an error unless some entry lives below `dist/`.
@@ -402,6 +424,10 @@ fn require_dist(names: &[String], source: &Path) -> Result<(), Error> {
 }
 
 /// Return an error unless the manifest entrypoint exists under `dist/`.
+///
+/// Every entry was already required to be a regular file, so a name
+/// match also proves the entrypoint is a regular file rather than a
+/// directory or device entry.
 fn require_entrypoint(
     names: &[String],
     manifest: &Manifest,
