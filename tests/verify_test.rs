@@ -33,6 +33,9 @@ const OVERSIZED_ENTRY_BYTES: usize = 64 * 1024 * 1024 + 1;
 /// Size of the chunk used to write the oversized entry.
 const WRITE_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Number of `dist` entries written above the archive entry budget.
+const OVERSIZED_ENTRY_COUNT: usize = 4096 + 1;
+
 #[test]
 fn verify_accepts_a_packed_archive() {
     let root = temp_root();
@@ -159,6 +162,18 @@ fn verify_rejects_entry_above_the_decompressed_budget() {
         message,
         "Archive entry is larger than the 64 MiB limit: dist/app.ts"
     );
+}
+
+#[test]
+fn verify_rejects_archive_above_the_entry_count_budget() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_many_entries_archive(&archive);
+    let error = verify_error(&archive);
+    let message = validation_message(error);
+    let expected =
+        format!("Archive has more than 4096 entries: {}", archive.display());
+    assert_eq!(message, expected);
 }
 
 #[test]
@@ -444,6 +459,23 @@ fn write_oversized_archive(path: &Path) {
             Err(error) => panic!("failed to write entry content: {error}"),
         }
         remaining -= count;
+    }
+    finish_archive(writer, path);
+}
+
+/// Write an archive whose entry count is above the entry budget.
+fn write_many_entries_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+    start_file(&mut writer, "manifest.json", options);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    let mut index = 0;
+    while index < OVERSIZED_ENTRY_COUNT {
+        let name = format!("dist/file{index}.ts");
+        start_file(&mut writer, &name, options);
+        write_content(&mut writer, "// content\n");
+        index += 1;
     }
     finish_archive(writer, path);
 }
