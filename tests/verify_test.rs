@@ -349,19 +349,26 @@ fn verify_cli_prints_a_tree() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Verifying archive: sample.van"));
-    assert!(stdout.contains("  [OK] Paths and ZIP structure are valid."));
-    assert!(stdout.contains("  [OK] manifest.json is present and valid."));
+    assert!(stdout.contains("Check passed: Paths and ZIP structure"));
     assert!(
-        stdout.contains("  [OK] dist/ and entrypoint (app.ts) are present.")
+        stdout.contains("Check passed: manifest.json is present and valid")
     );
-    assert!(stdout.contains("--- manifest.json ---"));
-    assert!(stdout.contains("\"name\":\"sample-plugin\""));
-    assert!(stdout.contains("---------------------"));
-    assert!(stdout.contains("Archive Contents:"));
+    assert!(
+        stdout.contains(
+            "Check passed: dist/ and entrypoint (app.ts) are present"
+        )
+    );
+    // The manifest is pretty-printed, so the compact form must be gone.
+    assert!(stdout.contains("\"name\": \"sample-plugin\""));
+    assert!(!stdout.contains("\"name\":\"sample-plugin\""));
+    assert!(stdout.contains("Archive Contents"));
     assert!(stdout.contains("├── dist/"));
     assert!(stdout.contains("│   └── app.ts"));
     assert!(stdout.contains("└── manifest.json"));
     assert!(stdout.contains("Archive is valid."));
+    // Piped output keeps the plain fallback: no colors, no log tags.
+    assert!(!stdout.contains('\u{1b}'));
+    assert!(!stdout.contains("[OK]"));
 }
 
 #[test]

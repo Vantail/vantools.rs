@@ -29,23 +29,6 @@ where
     return map_failure(written, failure);
 }
 
-/// Write `text` verbatim to `stream`.
-///
-/// # Errors
-///
-/// Returns [`Error::Runtime`] when the stream cannot be written.
-pub fn write_text<W>(
-    stream: &mut W,
-    text: &str,
-    failure: &str,
-) -> Result<(), Error>
-where
-    W: Write,
-{
-    let written = write!(stream, "{text}");
-    return map_failure(written, failure);
-}
-
 /// Convert a write result into an error that names the failed operation.
 fn map_failure(written: io::Result<()>, failure: &str) -> Result<(), Error> {
     return match written {

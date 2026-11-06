@@ -39,6 +39,9 @@ const RED: &str = "\x1b[31m";
 /// ANSI SGR sequence for magenta.
 const MAGENTA: &str = "\x1b[35m";
 
+/// ANSI SGR sequence for dark gray.
+const DARK_GRAY: &str = "\x1b[90m";
+
 /// ANSI SGR sequence that resets every attribute.
 const RESET: &str = "\x1b[0m";
 
@@ -85,6 +88,27 @@ pub fn log_err(message: &str, value: &str) {
 /// so it carries no value.
 pub fn log_start(message: &str) {
     log_line(Stream::Output, MAGENTA, "START", message, "");
+}
+
+/// Write a multi-line text block in dark gray.
+///
+/// A block is a code-like body rather than a log event, so it carries no
+/// timestamp and no tag. On a pipe, a file, or in CI the text is written
+/// unchanged so captured output stays plain.
+pub fn log_block(text: &str) {
+    let stdout = io::stdout();
+    let decorated = stdout.is_terminal();
+    let mut locked = stdout.lock();
+    for line in text.lines() {
+        let written = match decorated {
+            true => writeln!(locked, "{DARK_GRAY}{line}{RESET}"),
+            false => writeln!(locked, "{line}"),
+        };
+        if written.is_err() {
+            return;
+        }
+    }
+    return;
 }
 
 /// Write one log line to `stream`.

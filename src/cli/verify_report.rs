@@ -1,30 +1,31 @@
 //! Report formatting for a successful archive verification.
 //!
 //! The report is written to stdout only after every check passed, so an
-//! invalid archive never produces a partial report. Untrusted values,
-//! such as the manifest bytes and the entry names, are escaped before
-//! they reach the terminal.
+//! invalid archive never produces a partial report. Every validation
+//! step goes through the log helpers, the manifest is re-serialized as
+//! indented JSON so it reads like a code block, and the tree renderer
+//! colorizes the entry names. Untrusted values, such as the manifest
+//! bytes and the entry names, are escaped before they reach the
+//! terminal.
 
 use std::io;
-use std::io::Write;
 use std::path::Path;
 
+use serde_json::Value;
 use vantools::common::Error;
 use vantools::common::validation::{escape_manifest, escape_path, escape_text};
 use vantools::verify::VerifyReport;
 
-use super::output::{write_line, write_text};
-use super::tui::log::{log_ok, log_start};
+use super::output::write_line;
+use super::tui::log::{log_block, log_info, log_ok, log_start};
 use super::tui::tree::render_tree_lines;
 
 /// Print the result of a successful verification.
 ///
-/// The header and the verdict go through the log helpers, so they match
-/// the decorated look of the rest of the CLI. The structured blocks in
-/// between keep their own layout, because the manifest and the tree are
-/// multi-line by nature. The collected entry names are sorted in place
-/// by the tree renderer, so the report never holds a second copy of
-/// them.
+/// Each check is one log line, the manifest follows as an indented JSON
+/// block, and the archive contents trail as a colorized tree. The
+/// collected entry names are sorted in place by the tree renderer, so
+/// the report never holds a second copy of them.
 ///
 /// # Errors
 ///
@@ -32,29 +33,18 @@ use super::tui::tree::render_tree_lines;
 pub fn print_report(report: &mut VerifyReport) -> Result<(), Error> {
     let label = archive_label(&report.source);
     log_start(&format!("Verifying archive: {label}"));
+    log_ok("Check passed", "Paths and ZIP structure");
+    log_ok("Check passed", "manifest.json is present and valid");
+    let entrypoint = escape_text(&report.manifest.entrypoint);
+    let entrypoint_check =
+        format!("dist/ and entrypoint ({entrypoint}) are present");
+    log_ok("Check passed", &entrypoint_check);
+    log_info("manifest.json", "");
+    print_manifest(&report.manifest_bytes)?;
+    log_info("Archive Contents", "");
     {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
-        write_line(
-            &mut handle,
-            "  [OK] Paths and ZIP structure are valid.",
-            "output",
-        )?;
-        write_line(
-            &mut handle,
-            "  [OK] manifest.json is present and valid.",
-            "output",
-        )?;
-        let entrypoint = escape_text(&report.manifest.entrypoint);
-        let entrypoint_line =
-            format!("  [OK] dist/ and entrypoint ({entrypoint}) are present.");
-        write_line(&mut handle, &entrypoint_line, "output")?;
-        write_line(&mut handle, "", "output")?;
-        write_line(&mut handle, "--- manifest.json ---", "output")?;
-        write_manifest(&mut handle, &report.manifest_bytes)?;
-        write_line(&mut handle, "---------------------", "output")?;
-        write_line(&mut handle, "", "output")?;
-        write_line(&mut handle, "Archive Contents:", "output")?;
         for line in render_tree_lines(&mut report.entry_names) {
             write_line(&mut handle, &line, "output")?;
         }
@@ -64,25 +54,44 @@ pub fn print_report(report: &mut VerifyReport) -> Result<(), Error> {
     return Ok(());
 }
 
-/// Print the manifest bytes, ending with one newline.
+/// Print the archived manifest as a block, followed by one blank line.
 ///
-/// The archived manifest is untrusted, so its control characters are
-/// rendered as visible escapes before they reach the terminal: printing
-/// the bytes verbatim would let a crafted manifest emit terminal escape
-/// sequences, overwrite the line, or forge log lines in captured output.
-/// Line breaks are kept so a formatted manifest stays readable, and a
-/// printable manifest is rendered unchanged.
-fn write_manifest<W>(handle: &mut W, bytes: &[u8]) -> Result<(), Error>
-where
-    W: Write,
-{
+/// The archived bytes are untrusted, so they are parsed and written back
+/// out by `serde_json` instead of being dumped verbatim: control
+/// characters end up escaped, so a crafted manifest cannot emit terminal
+/// escape sequences or forge log lines. A manifest that does not parse
+/// as JSON falls back to the escaped text, which keeps the report
+/// complete.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when stdout cannot be written.
+fn print_manifest(bytes: &[u8]) -> Result<(), Error> {
+    let text = render_manifest(bytes);
+    log_block(&text);
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    return write_line(&mut handle, "", "output");
+}
+
+/// Render the manifest bytes as indented JSON.
+fn render_manifest(bytes: &[u8]) -> String {
+    let parsed = serde_json::from_slice::<Value>(bytes);
+    let value = match parsed {
+        Ok(value) => value,
+        Err(_) => return escaped_manifest(bytes),
+    };
+    let pretty = serde_json::to_string_pretty(&value);
+    return match pretty {
+        Ok(text) => text,
+        Err(_) => escaped_manifest(bytes),
+    };
+}
+
+/// Render the manifest bytes as escaped text, keeping their line breaks.
+fn escaped_manifest(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
-    let escaped = escape_manifest(&text);
-    write_text(handle, &escaped, "output")?;
-    if escaped.ends_with('\n') {
-        return Ok(());
-    }
-    return write_text(handle, "\n", "output");
+    return escape_manifest(&text);
 }
 
 /// Render the archive file name used in the report header.
