@@ -17,15 +17,17 @@ const RESET: &str = "\x1b[0m";
 
 /// The `VAN TOOLS` wordmark, one entry per row.
 ///
-/// The rows are kept verbatim: the shadow face depends on the exact
-/// column of every block and box-drawing character.
+/// The rows are the ANSI Shadow rendering of the text, kept verbatim:
+/// the face depends on the exact column of every block and box-drawing
+/// character. Every row has the same width and every glyph keeps one
+/// width on every row, so no letter shifts sideways between rows.
 const LOGO_ROWS: [&str; 6] = [
-    "██╗   ██╗ █████╗███╗   ██╗████████╗ ██████╗ ██████╗██╗███████╗",
-    "██║   ██║██╔══██╗████╗  ██║╚══██╔══╝██╔═══██╗██╔═══██╗██║██╔════╝",
-    "██║   ██║███████║██╔██╗ ██║   ██║██║   ██║██║   ██║██║███████╗",
-    "╚██╗ ██╔╝██╔══██║██║╚██╗██║   ██║██║   ██║██║   ██║██║╚════██║",
-    " ╚████╔╝██║  ██║██║ ╚████║   ██║╚██████╔╝╚██████╔╝███████╗███████║",
-    "  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝ ╚═════╝ ╚═════╝╚══════╝╚══════╝",
+    "██╗   ██╗ █████╗ ███╗   ██╗    ████████╗ ██████╗  ██████╗ ██╗     ███████╗",
+    "██║   ██║██╔══██╗████╗  ██║    ╚══██╔══╝██╔═══██╗██╔═══██╗██║     ██╔════╝",
+    "██║   ██║███████║██╔██╗ ██║       ██║   ██║   ██║██║   ██║██║     ███████╗",
+    "╚██╗ ██╔╝██╔══██║██║╚██╗██║       ██║   ██║   ██║██║   ██║██║     ╚════██║",
+    " ╚████╔╝ ██║  ██║██║ ╚████║       ██║   ╚██████╔╝╚██████╔╝███████╗███████║",
+    "  ╚═══╝  ╚═╝  ╚═╝╚═╝  ╚═══╝       ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚══════╝",
 ];
 
 /// Print the `VAN TOOLS` wordmark in neon green.
