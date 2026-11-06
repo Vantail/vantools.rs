@@ -14,6 +14,7 @@ use vantools::common::validation::escape_manifest;
 use vantools::pack::PackCommand;
 use vantools::verify::VerifyCommand;
 use zip::CompressionMethod;
+use zip::System;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -581,14 +582,20 @@ fn write_symlink_archive(path: &Path, name: &str, target: &str) {
 }
 
 /// Write an archive whose `dist/app.ts` entry declares a directory.
+///
+/// Every entry declares a Unix origin so that its mode is read back the
+/// same way on every platform, instead of depending on the system the
+/// archive was written on.
 fn write_directory_typed_archive(path: &Path) {
     let mut writer = create_writer(path);
     let regular = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+        .compression_method(CompressionMethod::Deflated)
+        .system(System::Unix);
     start_file(&mut writer, "manifest.json", regular);
     write_content(&mut writer, SAMPLE_MANIFEST);
     let directory = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
+        .system(System::Unix)
         .external_attributes(DIRECTORY_EXTERNAL_ATTRIBUTES);
     start_file(&mut writer, "dist/app.ts", directory);
     write_content(&mut writer, "// content\n");
