@@ -32,7 +32,9 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// `<name>-<version>.van` and leave a corrupt, non-ZIP file on disk:
 /// the destination is now only replaced by one rename of a fully
 /// written, finished temporary archive, and every failure deletes the
-/// temporary file instead.
+/// temporary file instead. The finished archive is flushed to disk
+/// before the rename, so a successful run survives an unclean shutdown
+/// instead of leaving a truncated file behind.
 pub(super) fn write_archive(
     archive_path: &Path,
     manifest_bytes: &[u8],
@@ -170,13 +172,18 @@ fn default_file_options() -> SimpleFileOptions {
         .compression_method(CompressionMethod::Deflated);
 }
 
-/// Write the manifest and the collected entries into `file` and finish
-/// the ZIP stream.
+/// Write the manifest and the collected entries into `file`, finish the
+/// ZIP stream, and flush the result to disk.
+///
+/// The finished archive is synced with [`File::sync_all`] before the
+/// caller renames it into place, so an unclean shutdown cannot leave a
+/// zero-length or partially written file where a successful `pack`
+/// reported an archive.
 ///
 /// # Errors
 ///
-/// Returns any error of the archive writes, reported against the
-/// temporary path.
+/// Returns any error of the archive writes or of the final sync,
+/// reported against the temporary path.
 fn build_archive(
     temp_path: &Path,
     file: File,
@@ -188,10 +195,20 @@ fn build_archive(
     add_manifest(&mut writer, manifest_bytes, options)?;
     write_entries(&mut writer, entries, options)?;
     let finished = writer.finish();
-    return match finished {
-        Ok(_) => Ok(()),
+    let finished_file = match finished {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to finish {}: {error}",
+                escape_path(temp_path)
+            )));
+        }
+    };
+    let synced = finished_file.sync_all();
+    return match synced {
+        Ok(()) => Ok(()),
         Err(error) => Err(Error::Runtime(format!(
-            "failed to finish {}: {error}",
+            "failed to sync {}: {error}",
             escape_path(temp_path)
         ))),
     };
