@@ -60,6 +60,13 @@ const MAX_ENTRY_BYTES: u64 = 64 * MEBIBYTE;
 /// single `verify` run can be made to do.
 const MAX_TOTAL_BYTES: u64 = 256 * MEBIBYTE;
 
+/// Largest number of entries accepted in one archive.
+///
+/// Every entry name is validated and kept for the report, so the count
+/// bounds the memory a crafted central directory can make `verify`
+/// allocate. The limit stays far above any plausible plugin payload.
+const MAX_ENTRY_COUNT: usize = 4096;
+
 /// Name of the manifest file expected at the archive root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 
@@ -72,10 +79,11 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// extracting it: every entry name must be a safe relative path, no
 /// entry may carry a `node_modules` component, no entry may be a
 /// symbolic link, every entry must decompress to bytes that match its
-/// CRC-32 within the decompressed-size budgets, the manifest must pass
-/// the same checks `pack` applies, and `dist/` must contain the
-/// manifest entrypoint. A valid archive is reported with its manifest
-/// and its contents as a tree.
+/// CRC-32 within the decompressed-size budgets, the archive must hold
+/// no more than the entry-count budget, the manifest must pass the
+/// same checks `pack` applies, and `dist/` must contain the manifest
+/// entrypoint. A valid archive is reported with its manifest and its
+/// contents as a tree.
 #[non_exhaustive]
 pub struct VerifyCommand {
     /// The `.van` archive to verify.
@@ -84,7 +92,8 @@ pub struct VerifyCommand {
 
 /// Everything a successful archive check produced.
 struct ArchiveCheck {
-    /// Entry names in archive order.
+    /// Entry names as the archive listed them; the report sorts them in
+    /// place.
     names: Vec<String>,
     /// The parsed and validated manifest.
     manifest: Manifest,
@@ -121,8 +130,8 @@ struct PendingNode<'a> {
 impl Command for VerifyCommand {
     fn run(&self) -> Result<(), Error> {
         show_progress();
-        let check = self.inspect()?;
-        return print_report(&self.source, &check);
+        let mut check = self.inspect()?;
+        return print_report(&self.source, &mut check);
     }
 }
 
@@ -178,11 +187,18 @@ impl VerifyCommand {
     /// local header, the compressed stream, and its CRC-32, so an
     /// archive with corrupt or truncated data is rejected here instead
     /// of failing later during installation.
+    ///
+    /// The entry count is checked before any entry is read, so an
+    /// archive holding an excessive number of entries is rejected
+    /// without allocating a name per entry.
     fn collect_entry_names(
         &self,
         archive: &mut ZipArchive<File>,
     ) -> Result<Vec<String>, Error> {
         let count = archive.len();
+        if count > MAX_ENTRY_COUNT {
+            return Err(too_many_entries(&self.source));
+        }
         let mut names: Vec<String> = Vec::new();
         let mut total_bytes: u64 = 0;
         for index in 0..count {
@@ -319,6 +335,14 @@ fn contents_too_large(source: &Path) -> Error {
     ));
 }
 
+/// Build the error for an archive above the entry-count budget.
+fn too_many_entries(source: &Path) -> Error {
+    return Error::ValidationError(format!(
+        "Archive has more than {MAX_ENTRY_COUNT} entries: {}",
+        escape_path(source)
+    ));
+}
+
 impl CliCommand for VerifyCommand {
     fn name(&self) -> &'static str {
         return "verify";
@@ -395,7 +419,10 @@ fn require_entrypoint(
 }
 
 /// Print the result of a successful verification.
-fn print_report(source: &Path, check: &ArchiveCheck) -> Result<(), Error> {
+///
+/// The collected entry names are sorted in place, so the report never
+/// holds a second copy of them.
+fn print_report(source: &Path, check: &mut ArchiveCheck) -> Result<(), Error> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     let header = format!("Verifying archive: {}", archive_label(source));
@@ -420,9 +447,8 @@ fn print_report(source: &Path, check: &ArchiveCheck) -> Result<(), Error> {
     write_line(&mut handle, "---------------------", "output")?;
     write_line(&mut handle, "", "output")?;
     write_line(&mut handle, "Archive Contents:", "output")?;
-    let mut sorted = check.names.clone();
-    sorted.sort_by(compare_paths);
-    let tree = build_tree(&sorted);
+    check.names.sort_by(compare_paths);
+    let tree = build_tree(&check.names);
     for line in render_tree(&tree) {
         write_line(&mut handle, &line, "output")?;
     }
