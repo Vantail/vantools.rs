@@ -161,6 +161,19 @@ fn verify_rejects_a_duplicate_manifest_entry() {
 }
 
 #[test]
+fn verify_rejects_duplicate_names_differing_in_encoding() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_mixed_encoding_duplicate_archive(&archive);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
 fn verify_accepts_regular_entries_with_permissions() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -683,6 +696,24 @@ fn write_duplicate_manifest_archive(path: &Path) {
     ];
     write_archive(path, &entries);
     replace_all_bytes(path, b"manifestXjson", b"manifest.json");
+}
+
+/// Write an archive that reports one decoded name twice.
+///
+/// The first `dist/café.ts` is stored as UTF-8 and the second one is
+/// stored under a decoy name whose bytes are rewritten to CP437, so the
+/// two central directory names differ while the reader decodes both to
+/// `dist/café.ts`. A byte-level duplicate check cannot see this case
+/// because the raw names differ.
+fn write_mixed_encoding_duplicate_archive(path: &Path) {
+    let entries: [(&str, &str); 4] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/café.ts", "// utf8 content\n"),
+        ("dist/cafX.ts", "// cp437 content\n"),
+    ];
+    write_archive(path, &entries);
+    replace_all_bytes(path, b"cafX", b"caf\x82");
 }
 
 /// Write an archive holding `entries` with the given Unix permissions.

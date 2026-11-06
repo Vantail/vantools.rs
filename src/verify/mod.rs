@@ -16,6 +16,7 @@
 //! unbounded data.
 
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -207,10 +208,14 @@ impl VerifyCommand {
     /// without allocating a name per entry.
     ///
     /// Entry names must be unique, as Section 6 of `docs/SPEC.md`
-    /// requires. The ZIP reader keeps one entry per name, so the
-    /// duplicates it reports separately are rejected before any entry
-    /// is read: otherwise the payload this run validates could differ
-    /// from the payload another consumer extracts under that name.
+    /// requires. Byte-identical duplicates are rejected before any
+    /// entry is read, and every decoded name is checked against the
+    /// names already seen, because the reader decodes a name written in
+    /// another encoding to the same string: an entry stored as CP437
+    /// and one stored as UTF-8 can report one name while keeping
+    /// different bytes. Either way, the payload this run validates
+    /// could differ from the payload another consumer extracts under
+    /// that name.
     ///
     /// The returned index is the position of the `manifest.json` entry,
     /// so the manifest is later read from exactly that entry.
@@ -226,6 +231,7 @@ impl VerifyCommand {
             return Err(duplicate_entry(&self.source));
         }
         let mut names: Vec<String> = Vec::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut manifest_index: Option<usize> = None;
         let mut total_bytes: u64 = 0;
         for index in 0..count {
@@ -248,6 +254,9 @@ impl VerifyCommand {
                     )));
                 }
             };
+            if !seen.insert(name.clone()) {
+                return Err(duplicate_entry(&self.source));
+            }
             validate_archive_entry(&name)?;
             validate_no_node_modules(Path::new(&name))?;
             if name == MANIFEST_FILE_NAME {
@@ -435,8 +444,9 @@ impl CliCommand for VerifyCommand {
 
 /// Build the error for an archive that lists one entry name twice.
 ///
-/// The reader reports only that duplicates are present, not which name
-/// repeats, so the diagnostic names the archive instead.
+/// The byte-level check reports only that duplicates are present, not
+/// which name repeats, so both checks share this diagnostic, which
+/// names the archive instead.
 fn duplicate_entry(source: &Path) -> Error {
     return Error::ValidationError(format!(
         "Duplicate archive entry names are not allowed: {}",
