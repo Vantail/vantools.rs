@@ -286,12 +286,40 @@ fn verify_cli_prints_a_tree_for_shared_directories() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let expected = concat!(
-        "\u{251c}\u{2500}\u{2500} dist-extra/\n",
-        "\u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
         "\u{251c}\u{2500}\u{2500} dist/\n",
         "\u{2502}   \u{251c}\u{2500}\u{2500} app.ts\n",
         "\u{2502}   \u{2514}\u{2500}\u{2500} sub/\n",
         "\u{2502}       \u{2514}\u{2500}\u{2500} deep.ts\n",
+        "\u{251c}\u{2500}\u{2500} dist-extra/\n",
+        "\u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
+        "\u{2514}\u{2500}\u{2500} manifest.json\n",
+    );
+    assert!(stdout.contains(expected), "unexpected tree: {stdout}");
+}
+
+#[test]
+fn verify_cli_reuses_a_directory_matching_an_entry_name() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 4] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist", "// placeholder\n"),
+        ("dist/app.ts", "// content\n"),
+        ("dist-extra/other.ts", "// other\n"),
+    ];
+    write_archive(&archive, &entries);
+    let archive_path = match archive.to_str() {
+        Some(value) => value,
+        None => panic!("archive path is not valid Unicode"),
+    };
+    let output = run_van(&["verify", "--source", archive_path]);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = concat!(
+        "\u{251c}\u{2500}\u{2500} dist/\n",
+        "\u{2502}   \u{2514}\u{2500}\u{2500} app.ts\n",
+        "\u{251c}\u{2500}\u{2500} dist-extra/\n",
+        "\u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
         "\u{2514}\u{2500}\u{2500} manifest.json\n",
     );
     assert!(stdout.contains(expected), "unexpected tree: {stdout}");

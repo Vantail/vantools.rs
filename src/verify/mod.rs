@@ -9,6 +9,7 @@
 //! A valid archive is reported with its manifest and its contents as a
 //! tree.
 
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io;
 use std::io::Read;
@@ -420,7 +421,7 @@ fn print_report(source: &Path, check: &ArchiveCheck) -> Result<(), Error> {
     write_line(&mut handle, "", "output")?;
     write_line(&mut handle, "Archive Contents:", "output")?;
     let mut sorted = check.names.clone();
-    sorted.sort();
+    sorted.sort_by(compare_paths);
     let tree = build_tree(&sorted);
     for line in render_tree(&tree) {
         write_line(&mut handle, &line, "output")?;
@@ -459,14 +460,58 @@ fn archive_label(source: &Path) -> String {
     return escape_path(Path::new(name));
 }
 
-/// Build the tree of path segments from the sorted entry names.
+/// Compare two entry names so a directory stays next to its contents.
 ///
-/// The names are sorted, so every entry that shares a directory is
-/// adjacent to the entries of its siblings. One pass can therefore
-/// carry the chain of open directories and create only the segments an
-/// entry adds, instead of scanning a sibling list for each segment.
-/// The work stays linear in the number of path segments, so an archive
-/// with many entries in one directory no longer costs a scan per
+/// A plain byte order separates an entry such as `dist` from the
+/// entries below it, `dist/app.ts`, whenever a sibling such as
+/// `dist-extra/other.ts` sorts between them, because `/` is `0x2F` and
+/// so orders after most punctuation. Comparing `/` below every other
+/// byte keeps each directory and everything below it contiguous, which
+/// is what [`build_tree`] relies on to reuse an open directory instead
+/// of creating a second node with the same name.
+fn compare_paths(left: &String, right: &String) -> Ordering {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let limit = left_bytes.len().min(right_bytes.len());
+    let mut position = 0;
+    while position < limit {
+        let left_byte = match left_bytes.get(position) {
+            Some(value) => *value,
+            None => break,
+        };
+        let right_byte = match right_bytes.get(position) {
+            Some(value) => *value,
+            None => break,
+        };
+        let left_key = path_order_key(left_byte);
+        let right_key = path_order_key(right_byte);
+        if left_key != right_key {
+            return left_key.cmp(&right_key);
+        }
+        position += 1;
+    }
+    return left_bytes.len().cmp(&right_bytes.len());
+}
+
+/// Return the sort key of one byte of an entry name.
+///
+/// `/` maps below every other byte, so it sorts before any character
+/// that could otherwise separate a directory from its contents, and
+/// the remaining bytes keep their usual order.
+fn path_order_key(byte: u8) -> u16 {
+    if byte == b'/' {
+        return 0;
+    }
+    return u16::from(byte) + 1;
+}
+
+/// Build the tree of path segments from the ordered entry names.
+///
+/// [`compare_paths`] keeps every entry contiguous with the entries
+/// that share its directory, so one pass can carry the chain of open
+/// directories and create only the segments an entry adds. No sibling
+/// list is scanned, so a directory holding many entries costs work
+/// proportional to the number of path segments instead of a scan per
 /// entry.
 fn build_tree(names: &[String]) -> TreeNode {
     let mut root = TreeNode {
