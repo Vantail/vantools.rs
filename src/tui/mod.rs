@@ -1,7 +1,9 @@
 //! Terminal user interface helpers.
 //!
-//! The module collects presentation code that only runs in an
-//! interactive terminal. [`progress`] draws the cosmetic animation the
-//! subcommands share before their real work starts.
+//! The module collects presentation code: [`progress`] draws the
+//! cosmetic animation the subcommands share before their real work
+//! starts, and [`tree`] renders a flat listing of entry names as an
+//! ASCII tree.
 
 pub mod progress;
+pub mod tree;
