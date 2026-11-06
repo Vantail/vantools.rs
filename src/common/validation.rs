@@ -176,6 +176,39 @@ pub fn escape_text(text: &str) -> String {
     };
 }
 
+/// Renders untrusted manifest text as printable lines.
+///
+/// Every control character is escaped like [`escape_text`] does, so a
+/// crafted manifest cannot emit terminal escape sequences or carriage
+/// returns. Line breaks are kept, because a formatted manifest is
+/// printed as a block and would otherwise collapse into one unreadable
+/// line. The value is not length-limited: the caller prints the whole
+/// manifest, which is bounded by [`crate::common::manifest::MAX_MANIFEST_BYTES`].
+///
+/// # Examples
+///
+/// An escape sequence inside a manifest string is rendered with a
+/// visible escape instead of being written to the terminal raw.
+pub fn escape_manifest(text: &str) -> String {
+    let mut rendered = String::new();
+    let mut parts = text.split('\n');
+    let mut first = true;
+    loop {
+        let next = parts.next();
+        let part = match next {
+            None => break,
+            Some(value) => value,
+        };
+        if !first {
+            rendered.push('\n');
+        }
+        let escaped = escape_line(part);
+        rendered.push_str(&escaped);
+        first = false;
+    }
+    return rendered;
+}
+
 /// Escape a value so that it cannot break a diagnostic across lines.
 ///
 /// Only control characters are escaped, one character at a time. A name

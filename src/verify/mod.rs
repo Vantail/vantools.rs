@@ -24,7 +24,8 @@ use crate::common::command::Command;
 use crate::common::manifest::{MAX_MANIFEST_BYTES, Manifest};
 use crate::common::output::{write_line, write_text};
 use crate::common::validation::{
-    escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
+    escape_manifest, escape_path, escape_text, validate_archive_entry,
+    validate_no_node_modules,
 };
 use crate::tui::progress::show_progress;
 
@@ -420,14 +421,22 @@ fn print_report(source: &Path, check: &ArchiveCheck) -> Result<(), Error> {
     return write_line(&mut handle, "Archive is valid.", "output");
 }
 
-/// Print the exact manifest bytes, ending with one newline.
+/// Print the manifest bytes, ending with one newline.
+///
+/// The archived manifest is untrusted, so its control characters are
+/// rendered as visible escapes before they reach the terminal: printing
+/// the bytes verbatim would let a crafted manifest emit terminal escape
+/// sequences, overwrite the line, or forge log lines in captured output.
+/// Line breaks are kept so a formatted manifest stays readable, and a
+/// printable manifest is rendered unchanged.
 fn write_manifest<W>(handle: &mut W, bytes: &[u8]) -> Result<(), Error>
 where
     W: Write,
 {
     let text = String::from_utf8_lossy(bytes);
-    write_text(handle, &text, "output")?;
-    if text.ends_with('\n') {
+    let escaped = escape_manifest(&text);
+    write_text(handle, &escaped, "output")?;
+    if escaped.ends_with('\n') {
         return Ok(());
     }
     return write_text(handle, "\n", "output");
