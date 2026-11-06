@@ -8,6 +8,9 @@
 
 use std::ffi::OsStr;
 use std::fs;
+use std::fs::File;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use unicode_normalization::is_nfc;
@@ -112,6 +115,86 @@ pub fn validated_metadata(path: &Path) -> Result<fs::Metadata, Error> {
         return Ok(metadata);
     }
     return Err(symlink_error(path));
+}
+
+/// Opens `path` only when it still refers to the file that passed
+/// validation.
+///
+/// The path is inspected with [`validated_metadata`] immediately before
+/// it is opened, the opened handle is checked again through
+/// [`File::metadata`], and on Unix both metadata snapshots are compared
+/// by device and inode numbers. A path swapped for a symlink or another
+/// file between the validation and the open is therefore rejected
+/// instead of contributing content from elsewhere, both around and
+/// inside the check-then-open window. On other platforms stable `std`
+/// does not expose a comparable file identity, so only the file type of
+/// the opened handle is checked.
+///
+/// Every caller that reads a file from a directory it does not fully
+/// control should open it this way, so the identity check is applied
+/// consistently instead of in one place only.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symbolic link, another
+/// non-regular file, or a path that was replaced after validation, and
+/// [`Error::Runtime`] when the path cannot be opened or inspected.
+pub fn open_validated_file(path: &Path) -> Result<File, Error> {
+    let validated = validated_metadata(path)?;
+    let opened = File::open(path);
+    let file = match opened {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    let metadata = match file.metadata() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    if !is_same_validated_file(&validated, &metadata) {
+        return Err(Error::ValidationError(format!(
+            "Source file changed or was replaced while packing: {}",
+            escape_path(path)
+        )));
+    }
+    return Ok(file);
+}
+
+/// Returns true when the opened handle still refers to the file that
+/// passed validation.
+///
+/// A validated file and a swap target are different file system entries
+/// with different device and inode numbers. On Unix stable `std` reads
+/// both numbers from [`fs::Metadata`], so the comparison is exact. On
+/// other platforms only the file type is compared, which is what the
+/// earlier open-handle check guaranteed by itself.
+#[cfg(unix)]
+fn is_same_validated_file(
+    validated: &fs::Metadata,
+    opened: &fs::Metadata,
+) -> bool {
+    return validated.dev() == opened.dev() && validated.ino() == opened.ino();
+}
+
+/// Returns true when the opened handle refers to a regular file.
+///
+/// See [`is_same_validated_file`] for why stable `std` offers no exact
+/// file identity outside Unix.
+#[cfg(not(unix))]
+fn is_same_validated_file(
+    validated: &fs::Metadata,
+    opened: &fs::Metadata,
+) -> bool {
+    return validated.file_type().is_file() && opened.file_type().is_file();
 }
 
 /// Validates that no component of `path` is named `node_modules`.

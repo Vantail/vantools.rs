@@ -1,14 +1,13 @@
 //! Manifest handling for `.van` plugin archives.
 
 use serde::Deserialize;
-use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::str;
 
 use crate::common::Error;
 use crate::common::validation::{
-    escape_path, escape_text, validate_archive_entry,
+    escape_path, escape_text, open_validated_file, validate_archive_entry,
 };
 
 /// Byte order mark that a manifest must not start with.
@@ -57,8 +56,8 @@ impl Manifest {
     /// # Errors
     ///
     /// Returns [`Error::Runtime`] when the file cannot be read, and
-    /// [`Error::ValidationError`] when the file is larger than 1 MiB or
-    /// its content is invalid.
+    /// [`Error::ValidationError`] when the path is not a regular file,
+    /// the file is larger than 1 MiB, or its content is invalid.
     pub fn from_dir(source: &Path) -> Result<Self, Error> {
         let loaded = Self::from_dir_with_bytes(source)?;
         let (manifest, _) = loaded;
@@ -75,8 +74,8 @@ impl Manifest {
     /// # Errors
     ///
     /// Returns [`Error::Runtime`] when the file cannot be read, and
-    /// [`Error::ValidationError`] when the file is larger than 1 MiB or
-    /// its content is invalid.
+    /// [`Error::ValidationError`] when the path is not a regular file,
+    /// the file is larger than 1 MiB, or its content is invalid.
     pub fn from_dir_with_bytes(
         source: &Path,
     ) -> Result<(Self, Vec<u8>), Error> {
@@ -113,21 +112,15 @@ impl Manifest {
     }
 }
 
-/// Read the raw manifest bytes.
+/// Read the raw manifest bytes through a validated handle.
 ///
-/// At most 1 MiB is read, so an oversized manifest is rejected instead of
-/// being loaded into memory in full.
+/// The file is opened by [`open_validated_file`], so the manifest read
+/// applies the same identity check as the `dist` files and a path
+/// swapped after validation cannot supply a manifest from outside the
+/// source directory. At most 1 MiB is read, so an oversized manifest is
+/// rejected instead of being loaded into memory in full.
 fn read_manifest(path: &Path) -> Result<Vec<u8>, Error> {
-    let opened = File::open(path);
-    let file = match opened {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to read {}: {error}",
-                escape_path(path)
-            )));
-        }
-    };
+    let file = open_validated_file(path)?;
     let mut limited = file.take(MAX_MANIFEST_BYTES + 1);
     let mut bytes: Vec<u8> = Vec::new();
     let read = limited.read_to_end(&mut bytes);
