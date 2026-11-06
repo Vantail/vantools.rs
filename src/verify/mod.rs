@@ -99,6 +99,14 @@ struct TreeNode {
     children: Vec<TreeNode>,
 }
 
+/// One directory that is open while the tree is built.
+struct OpenDirectory {
+    /// Name of the path segment this directory represents.
+    name: String,
+    /// Position of this directory in its parent's children.
+    index: usize,
+}
+
 /// A node waiting to be rendered.
 struct PendingNode<'a> {
     /// The node to render.
@@ -452,48 +460,97 @@ fn archive_label(source: &Path) -> String {
 }
 
 /// Build the tree of path segments from the sorted entry names.
+///
+/// The names are sorted, so every entry that shares a directory is
+/// adjacent to the entries of its siblings. One pass can therefore
+/// carry the chain of open directories and create only the segments an
+/// entry adds, instead of scanning a sibling list for each segment.
+/// The work stays linear in the number of path segments, so an archive
+/// with many entries in one directory no longer costs a scan per
+/// entry.
 fn build_tree(names: &[String]) -> TreeNode {
     let mut root = TreeNode {
         name: String::new(),
         children: Vec::new(),
     };
+    let mut open: Vec<OpenDirectory> = Vec::new();
     for name in names {
-        insert_path(&mut root, name);
+        insert_sorted_path(&mut root, &mut open, name);
     }
     return root;
 }
 
-/// Insert one entry into `root`, creating the missing directories.
-fn insert_path(root: &mut TreeNode, path: &str) {
-    let mut current = root;
+/// Insert one entry whose name belongs after the previous entry.
+///
+/// `open` holds the directory created for every segment of the
+/// previously inserted entry. The segments this entry shares with it
+/// are reused, and only the remaining segments are created.
+fn insert_sorted_path(
+    root: &mut TreeNode,
+    open: &mut Vec<OpenDirectory>,
+    path: &str,
+) {
+    let mut segments: Vec<&str> = Vec::new();
     for segment in path.split('/') {
-        let position = child_position(current, segment);
-        let position = match position {
-            Some(value) => value,
-            None => {
-                current.children.push(TreeNode {
-                    name: String::from(segment),
-                    children: Vec::new(),
-                });
-                current.children.len() - 1
-            }
-        };
-        let next = current.children.get_mut(position);
-        current = match next {
+        segments.push(segment);
+    }
+    let shared = shared_segments(open, &segments);
+    open.truncate(shared);
+    let mut position = shared;
+    while position < segments.len() {
+        let segment = match segments.get(position) {
             Some(value) => value,
             None => return,
         };
+        let parent = match node_at_mut(root, open) {
+            Some(value) => value,
+            None => return,
+        };
+        let name = String::from(*segment);
+        parent.children.push(TreeNode {
+            name: name.clone(),
+            children: Vec::new(),
+        });
+        let index = parent.children.len() - 1;
+        open.push(OpenDirectory {
+            name,
+            index,
+        });
+        position += 1;
     }
 }
 
-/// Return the position of the child named `name`, when it exists.
-fn child_position(node: &TreeNode, name: &str) -> Option<usize> {
-    for (position, child) in node.children.iter().enumerate() {
-        if child.name == name {
-            return Some(position);
-        }
+/// Return the directory reached by following `open` from `root`.
+fn node_at_mut<'a>(
+    root: &'a mut TreeNode,
+    open: &[OpenDirectory],
+) -> Option<&'a mut TreeNode> {
+    let mut current = root;
+    for directory in open {
+        current = current.children.get_mut(directory.index)?;
     }
-    return None;
+    return Some(current);
+}
+
+/// Count the leading segments `open` and `segments` share.
+fn shared_segments(open: &[OpenDirectory], segments: &[&str]) -> usize {
+    let limit = open.len().min(segments.len());
+    let mut shared = 0;
+    while shared < limit {
+        let directory = match open.get(shared) {
+            Some(value) => value,
+            None => return shared,
+        };
+        let segment = match segments.get(shared) {
+            Some(value) => value,
+            None => return shared,
+        };
+        if directory.name.as_str() != *segment {
+            return shared;
+        }
+        shared += 1;
+    }
+    return shared;
 }
 
 /// Render the tree below `root` as one line per node.
