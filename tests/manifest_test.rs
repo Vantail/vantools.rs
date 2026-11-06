@@ -260,6 +260,36 @@ fn pack_does_not_create_archive_for_oversized_name() {
     assert!(!target.exists() || !contains_archive(&target));
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_manifest_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    create_dir(&source);
+    // A valid manifest outside the source directory must not be
+    // reachable through the manifest path.
+    let outside = root.path().join("outside.json");
+    write_file(&outside, VALID_MANIFEST.as_bytes());
+    let manifest_path = source.join("manifest.json");
+    let linked = symlink(&outside, &manifest_path);
+    match linked {
+        Ok(()) => {}
+        Err(error) => panic!("failed to create a symlink: {error}"),
+    }
+    let result = Manifest::from_dir(&source);
+    let error = match result {
+        Ok(_) => panic!("expected the manifest to be rejected"),
+        Err(value) => value,
+    };
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        manifest_path.display()
+    );
+    assert_eq!(validation_message(error), expected);
+}
+
 /// Create a temporary directory for one test.
 fn temp_root() -> TempDir {
     let created = tempdir();
