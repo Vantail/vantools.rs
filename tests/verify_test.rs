@@ -9,10 +9,9 @@ use std::process::Output;
 use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
-use vantools::common::command::Command;
 use vantools::common::validation::escape_manifest;
 use vantools::pack::PackCommand;
-use vantools::verify::VerifyCommand;
+use vantools::verify::{VerifyCommand, VerifyReport};
 use zip::CompressionMethod;
 use zip::System;
 use zip::ZipWriter;
@@ -49,16 +48,14 @@ fn verify_accepts_a_packed_archive() {
     let pack = PackCommand::new(source, target.clone());
     let packed = pack.run();
     match packed {
-        Ok(()) => {}
+        Ok(report) => assert_eq!(report.files_written, 2),
         Err(error) => panic!("pack failed: {error}"),
     }
     let archive = target.join("test-plugin-0.1.0.van");
-    let verify = VerifyCommand::new(archive);
-    let result = verify.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("verify failed: {error}"),
-    }
+    let report = verify_report(&archive);
+    assert_eq!(report.source, archive);
+    assert_eq!(report.manifest.entrypoint, "app.ts");
+    assert_eq!(report.entry_names.len(), 2);
 }
 
 #[test]
@@ -66,12 +63,15 @@ fn verify_accepts_a_minimal_archive() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
     write_minimal_archive(&archive);
-    let verify = VerifyCommand::new(archive);
-    let result = verify.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("verify failed: {error}"),
-    }
+    let report = verify_report(&archive);
+    assert_eq!(report.source, archive);
+    assert_eq!(report.manifest.entrypoint, "app.ts");
+    assert_eq!(report.manifest_bytes.as_slice(), SAMPLE_MANIFEST.as_bytes());
+    let mut names = report.entry_names;
+    names.sort();
+    let expected: Vec<String> =
+        vec![String::from("dist/app.ts"), String::from("manifest.json")];
+    assert_eq!(names, expected);
 }
 
 #[test]
@@ -180,12 +180,8 @@ fn verify_accepts_regular_entries_with_permissions() {
     let entries: [(&str, &str); 2] =
         [("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")];
     write_archive_with_permissions(&archive, &entries, 0o644);
-    let verify = VerifyCommand::new(archive);
-    let result = verify.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("verify failed: {error}"),
-    }
+    let report = verify_report(&archive);
+    assert_eq!(report.entry_names.len(), 2);
 }
 
 #[test]
@@ -329,7 +325,7 @@ fn verify_reports_a_missing_archive() {
     let verify = VerifyCommand::new(archive.clone());
     let result = verify.run();
     let error = match result {
-        Ok(()) => panic!("expected verification to be rejected"),
+        Ok(_) => panic!("expected verification to be rejected"),
         Err(value) => value,
     };
     let message = match error {
@@ -814,12 +810,22 @@ fn finish_archive(writer: ZipWriter<fs::File>, path: &Path) {
     }
 }
 
+/// Run `verify` and return the report it must produce.
+fn verify_report(archive: &Path) -> VerifyReport {
+    let verify = VerifyCommand::new(archive.to_path_buf());
+    let result = verify.run();
+    return match result {
+        Ok(value) => value,
+        Err(error) => panic!("verify failed: {error}"),
+    };
+}
+
 /// Run `verify` and return the error it must produce.
 fn verify_error(archive: &Path) -> Error {
     let verify = VerifyCommand::new(archive.to_path_buf());
     let result = verify.run();
     return match result {
-        Ok(()) => panic!("expected verification to be rejected"),
+        Ok(_) => panic!("expected verification to be rejected"),
         Err(value) => value,
     };
 }

@@ -9,12 +9,12 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 
-use crate::common::Error;
-use crate::common::output::{write_line, write_text};
-use crate::common::validation::{escape_manifest, escape_path, escape_text};
-use crate::tui::tree::render_tree_lines;
+use vantools::common::Error;
+use vantools::common::validation::{escape_manifest, escape_path, escape_text};
+use vantools::verify::VerifyReport;
 
-use super::ArchiveCheck;
+use super::output::{write_line, write_text};
+use super::tui::tree::render_tree_lines;
 
 /// Print the result of a successful verification.
 ///
@@ -24,13 +24,11 @@ use super::ArchiveCheck;
 /// # Errors
 ///
 /// Returns [`Error::Runtime`] when stdout cannot be written.
-pub(super) fn print_report(
-    source: &Path,
-    check: &mut ArchiveCheck,
-) -> Result<(), Error> {
+pub fn print_report(report: &mut VerifyReport) -> Result<(), Error> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    let header = format!("Verifying archive: {}", archive_label(source));
+    let label = archive_label(&report.source);
+    let header = format!("Verifying archive: {label}");
     write_line(&mut handle, &header, "output")?;
     write_line(
         &mut handle,
@@ -42,17 +40,17 @@ pub(super) fn print_report(
         "  [OK] manifest.json is present and valid.",
         "output",
     )?;
-    let entrypoint = escape_text(&check.manifest.entrypoint);
+    let entrypoint = escape_text(&report.manifest.entrypoint);
     let entrypoint_line =
         format!("  [OK] dist/ and entrypoint ({entrypoint}) are present.");
     write_line(&mut handle, &entrypoint_line, "output")?;
     write_line(&mut handle, "", "output")?;
     write_line(&mut handle, "--- manifest.json ---", "output")?;
-    write_manifest(&mut handle, &check.manifest_bytes)?;
+    write_manifest(&mut handle, &report.manifest_bytes)?;
     write_line(&mut handle, "---------------------", "output")?;
     write_line(&mut handle, "", "output")?;
     write_line(&mut handle, "Archive Contents:", "output")?;
-    for line in render_tree_lines(&mut check.names) {
+    for line in render_tree_lines(&mut report.entry_names) {
         write_line(&mut handle, &line, "output")?;
     }
     write_line(&mut handle, "", "output")?;

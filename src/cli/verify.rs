@@ -3,13 +3,14 @@
 use std::io;
 use std::path::PathBuf;
 
-use crate::common::Error;
-use crate::common::cli::{CliCommand, version_line};
-use crate::common::command::Command;
-use crate::common::output::write_line;
-use crate::common::validation::escape_text;
+use vantools::common::Error;
+use vantools::common::cli::{CliCommand, version_line};
+use vantools::common::validation::escape_text;
+use vantools::verify::VerifyCommand;
 
-use super::VerifyCommand;
+use super::output::write_line;
+use super::tui::progress::show_progress;
+use super::verify_report::print_report;
 
 /// Source flag of the `verify` subcommand.
 const SOURCE_FLAG: &str = "-s";
@@ -129,13 +130,18 @@ fn print_verify_help() -> Result<(), Error> {
 }
 
 /// Resolve the required flag and run the `verify` command.
+///
+/// The progress animation runs after the flag was accepted, so the help
+/// and version output stays untouched.
 fn run_verify_command(source: Option<PathBuf>) -> Result<(), Error> {
     let resolved_source = match source {
         Some(value) => value,
         None => return Err(missing_arguments()),
     };
     let command = VerifyCommand::new(resolved_source);
-    return command.run();
+    show_progress();
+    let mut report = command.run()?;
+    return print_report(&mut report);
 }
 
 /// Build the error for an argument the `verify` command does not accept.

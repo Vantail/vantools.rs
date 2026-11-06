@@ -2,10 +2,8 @@
 //! unified error type.
 
 pub mod cli;
-pub mod command;
 pub mod error;
 pub mod manifest;
-pub mod output;
 pub mod validation;
 pub mod walk;
 

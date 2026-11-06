@@ -7,7 +7,6 @@ use std::path::Path;
 use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
-use vantools::common::command::Command;
 use vantools::common::manifest::Manifest;
 use vantools::pack::PackCommand;
 
@@ -205,7 +204,7 @@ fn pack_does_not_create_archive_for_invalid_manifest() {
     let command = PackCommand::new(source, target.clone());
     let result = command.run();
     let error = match result {
-        Ok(()) => panic!("expected packing to fail"),
+        Ok(_) => panic!("expected packing to fail"),
         Err(value) => value,
     };
     let message = validation_message(error);
@@ -227,7 +226,7 @@ fn pack_does_not_write_outside_target_for_escaping_name() {
     let command = PackCommand::new(source, target);
     let result = command.run();
     let error = match result {
-        Ok(()) => panic!("expected packing to fail"),
+        Ok(_) => panic!("expected packing to fail"),
         Err(value) => value,
     };
     let message = validation_message(error);
@@ -252,7 +251,7 @@ fn pack_does_not_create_archive_for_oversized_name() {
     let command = PackCommand::new(source, target.clone());
     let result = command.run();
     let error = match result {
-        Ok(()) => panic!("expected packing to fail"),
+        Ok(_) => panic!("expected packing to fail"),
         Err(value) => value,
     };
     let message = validation_message(error);

@@ -1,9 +1,9 @@
 //! Subcommand dispatcher for the `van` CLI.
 
 use std::io;
+use std::io::Write;
 
 use crate::common::cli::{collect_arguments, version_line};
-use crate::common::output::{write_line, write_text};
 use crate::common::validation::escape_text;
 use crate::common::{Error, Result};
 
@@ -96,19 +96,35 @@ fn write_version() -> Result<()> {
     let line: String = version_line();
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    return write_line(&mut handle, &line, "output");
+    let written = writeln!(handle, "{line}");
+    return map_write_failure(written);
 }
 
 /// Write text to stdout.
 fn write_stdout(text: &str) -> Result<()> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    return write_text(&mut handle, text, "output");
+    let written = write!(handle, "{text}");
+    return map_write_failure(written);
 }
 
 /// Write text to stderr.
 fn write_stderr(text: &str) -> Result<()> {
     let stderr = io::stderr();
     let mut handle = stderr.lock();
-    return write_text(&mut handle, text, "output");
+    let written = write!(handle, "{text}");
+    return map_write_failure(written);
+}
+
+/// Convert a write result into the error reported for a failed write.
+///
+/// The shared output helpers moved to the `van` binary, so this module
+/// keeps the few writes its own help and version output needs.
+fn map_write_failure(written: io::Result<()>) -> Result<()> {
+    return match written {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            Err(Error::Runtime(format!("failed to write output: {error}")))
+        }
+    };
 }

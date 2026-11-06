@@ -7,6 +7,8 @@ use vantools::common::cli::{collect_arguments, report_error, to_exit_code};
 use vantools::common::{Error, VanError};
 use vantools::van;
 
+mod cli;
+
 /// Name of the subcommand routed to the `pack` module.
 const PACK_SUBCOMMAND: &str = "pack";
 
@@ -37,10 +39,10 @@ fn run() -> Result<(), Error> {
         None => return van::run_with_args(arguments),
     };
     if first == PACK_SUBCOMMAND {
-        return vantools::pack::run_cli(rest);
+        return cli::pack::run_cli(rest);
     }
     if first == VERIFY_SUBCOMMAND {
-        return vantools::verify::run_cli(rest);
+        return cli::verify::run_cli(rest);
     }
     return van::run_with_args(arguments);
 }

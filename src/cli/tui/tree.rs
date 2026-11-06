@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 use std::path::Path;
 
-use crate::common::validation::escape_path;
+use vantools::common::validation::escape_path;
 
 /// One node of the rendered tree.
 struct TreeNode {

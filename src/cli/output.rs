@@ -1,4 +1,4 @@
-//! Terminal output helpers shared by the commands.
+//! Terminal output helpers for the `van` binary.
 //!
 //! Writing is explicit: a stream that cannot be written produces an error
 //! instead of a panic, and `failure` names the operation in that error so
@@ -7,7 +7,7 @@
 use std::io;
 use std::io::Write;
 
-use crate::common::Error;
+use vantools::common::Error;
 
 /// Write `text` and a trailing newline to `stream`.
 ///

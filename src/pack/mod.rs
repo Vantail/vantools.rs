@@ -1,8 +1,9 @@
 //! Implementation of the `pack` command.
 //!
 //! This module holds the `PackCommand` type and the source validation it
-//! drives. Argument parsing lives in the `cli` submodule and the
-//! low-level archive writing lives in the `writer` submodule.
+//! drives. A run writes only the archive and returns a [`PackReport`];
+//! the low-level archive writing lives in the `writer` submodule and
+//! argument parsing lives in the `van` binary.
 
 use std::fs;
 use std::io;
@@ -10,22 +11,16 @@ use std::path::{Path, PathBuf};
 
 use crate::common::Error;
 use crate::common::cli::CliCommand;
-use crate::common::command::Command;
 use crate::common::manifest::Manifest;
-use crate::common::output::write_line;
 use crate::common::validation::{
     escape_path, validate_archive_entry, validate_file_type,
     validate_no_node_modules,
 };
 use crate::common::walk::{WalkEntry, walk_tree};
-use crate::tui::progress::show_progress;
 
-mod cli;
 mod writer;
 
 use writer::write_archive;
-
-pub use cli::run_cli;
 
 /// Name of the manifest file expected at the source root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -40,11 +35,11 @@ const ARCHIVE_EXTENSION: &str = "van";
 ///
 /// Reads a plugin source directory and writes a `<name>-<version>.van`
 /// archive into the target directory. An existing archive with the same
-/// name is overwritten after a warning is printed to stderr; an existing
-/// symlink or other non-regular entry is refused so the archive cannot
-/// be redirected outside the target directory. A successful run then
-/// reports the archive path, the files written, and the source files
-/// the layout excluded.
+/// name is overwritten; an existing symlink or other non-regular entry
+/// is refused so the archive cannot be redirected outside the target
+/// directory. A successful run returns a [`PackReport`] with the archive
+/// path, the files written, the source files the layout excluded, and
+/// whether the target directory was created or an archive was replaced.
 ///
 /// The source and target directories themselves are inspected without
 /// following links, so a symlinked directory is refused rather than
@@ -61,6 +56,21 @@ pub struct PackCommand {
     pub source: PathBuf,
     /// The directory that receives the generated archive.
     pub target: PathBuf,
+}
+
+/// Everything a completed pack run produced.
+#[non_exhaustive]
+pub struct PackReport {
+    /// Path of the archive that was written.
+    pub archive_path: PathBuf,
+    /// Number of files written to the archive, including the manifest.
+    pub files_written: usize,
+    /// Source files the archive layout excluded, in sorted order.
+    pub ignored_files: Vec<PathBuf>,
+    /// Whether the target directory had to be created.
+    pub target_created: bool,
+    /// Whether an existing archive was replaced.
+    pub overwrote_existing: bool,
 }
 
 /// A validated source file scheduled for the archive.
@@ -83,15 +93,6 @@ struct CollectedPack {
     ignored: Vec<PathBuf>,
 }
 
-impl Command for PackCommand {
-    fn run(&self) -> Result<(), Error> {
-        show_progress();
-        let dist_path = self.validate_layout()?;
-        let collected = self.collect_pack(&dist_path)?;
-        return self.write_collected(collected);
-    }
-}
-
 impl PackCommand {
     /// Creates a `pack` command for the given source and target.
     pub fn new(source: PathBuf, target: PathBuf) -> Self {
@@ -99,6 +100,20 @@ impl PackCommand {
             source,
             target,
         };
+    }
+
+    /// Run the command and return what it produced.
+    ///
+    /// The command writes only the archive; it prints nothing, so the
+    /// caller decides how to report the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when validation or the archive write fails.
+    pub fn run(&self) -> Result<PackReport, Error> {
+        let dist_path = self.validate_layout()?;
+        let collected = self.collect_pack(&dist_path)?;
+        return self.write_collected(collected);
     }
 
     /// Build the archive path from the manifest name and version.
@@ -114,19 +129,16 @@ impl PackCommand {
     ///
     /// A symlink at the target path is refused instead of followed, so
     /// the archive cannot land in a directory other than the one the
-    /// command named. The created path is escaped like every other
-    /// diagnostic, because the directory name is not trusted.
-    fn ensure_target(&self) -> Result<(), Error> {
+    /// command named. The returned flag records whether the directory had
+    /// to be created, so the caller can name its path in the report.
+    fn ensure_target(&self) -> Result<bool, Error> {
         refuse_symlink(&self.target)?;
         if self.target.is_dir() {
-            return Ok(());
+            return Ok(false);
         }
         let created = fs::create_dir_all(&self.target);
         return match created {
-            Ok(()) => notice(&format!(
-                "created target directory: {}",
-                escape_path(&self.target)
-            )),
+            Ok(()) => Ok(true),
             Err(error) => Err(Error::Runtime(format!(
                 "failed to create target directory {}: {error}",
                 escape_path(&self.target)
@@ -173,25 +185,35 @@ impl PackCommand {
         });
     }
 
-    /// Prepare the target, write the archive, and report the result.
+    /// Prepare the target and write the archive.
     ///
     /// This covers the final phase of a pack run: the target directory
-    /// is created, an existing archive is warned about, the archive is
-    /// written, and the ignored paths are sorted for the summary.
-    fn write_collected(&self, collected: CollectedPack) -> Result<(), Error> {
+    /// is created, an existing archive is recorded as replaced, the
+    /// archive is written, and the ignored paths are sorted for the
+    /// report.
+    fn write_collected(
+        &self,
+        collected: CollectedPack,
+    ) -> Result<PackReport, Error> {
         let CollectedPack {
             manifest,
             manifest_bytes,
             entries,
             ignored: mut source_ignored,
         } = collected;
-        self.ensure_target()?;
+        let target_created = self.ensure_target()?;
         let archive_path = self.archive_path(&manifest);
-        warn_if_overwriting(&archive_path)?;
+        let overwrote_existing = archive_path.exists();
         write_archive(&archive_path, &manifest_bytes, &entries)?;
         source_ignored.sort();
         let files_written = entries.len() + 1;
-        return report_success(&archive_path, files_written, &source_ignored);
+        return Ok(PackReport {
+            archive_path,
+            files_written,
+            ignored_files: source_ignored,
+            target_created,
+            overwrote_existing,
+        });
     }
 }
 
@@ -319,60 +341,6 @@ fn require_file(path: &Path, description: &str) -> Result<(), Error> {
         "{description} not found: {}",
         escape_path(path)
     )));
-}
-
-/// Print a notice about a successful side effect to stdout.
-fn notice(message: &str) -> Result<(), Error> {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    return write_line(&mut handle, message, "output");
-}
-
-/// Warn on stderr when the archive path already exists.
-///
-/// The warning goes to stderr so that stdout keeps carrying only the
-/// progress notices of a successful pack.
-fn warn_if_overwriting(path: &Path) -> Result<(), Error> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let message =
-        format!("Warning: Overwriting existing archive: {}", escape_path(path));
-    return warn(&message);
-}
-
-/// Print a warning to stderr.
-fn warn(message: &str) -> Result<(), Error> {
-    let stderr = io::stderr();
-    let mut handle = stderr.lock();
-    return write_line(&mut handle, message, "warning");
-}
-
-/// Print the summary of a completed pack to stdout.
-///
-/// The summary names the archive, counts the files written, and lists
-/// the source files the layout excluded. Every interpolated path is
-/// escaped like any other diagnostic.
-fn report_success(
-    archive_path: &Path,
-    files_written: usize,
-    ignored: &[PathBuf],
-) -> Result<(), Error> {
-    let mut message = format!(
-        "Successfully created archive: {}\nFiles written: {}",
-        escape_path(archive_path),
-        files_written
-    );
-    let ignored_count = ignored.len();
-    message.push_str(&format!("\nFiles ignored: {ignored_count}"));
-    if !ignored.is_empty() {
-        message.push_str("\nIgnored paths:");
-        for relative in ignored {
-            let rendered = escape_path(relative);
-            message.push_str(&format!("\n  - {rendered}"));
-        }
-    }
-    return notice(&message);
 }
 
 /// Collect the files of `source` that the archive layout excludes.

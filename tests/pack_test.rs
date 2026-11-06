@@ -2,16 +2,15 @@
 
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
-use vantools::common::command::Command;
 use vantools::common::validation::{
     validate_archive_entry, validate_no_node_modules,
 };
-use vantools::pack::PackCommand;
+use vantools::pack::{PackCommand, PackReport};
 use zip::ZipArchive;
 
 /// Name of the archive the example plugin must produce.
@@ -72,12 +71,7 @@ fn pack_keeps_only_the_manifest_and_dist_contents() {
     create_dir(&outside);
     write_file(&outside.join("secret.txt"), "not part of the plugin\n");
     let target = root.path().join("target");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
     let archive = target.join(BAD_ARCHIVE);
     let mut names = archive_entry_names(&archive);
     names.sort();
@@ -88,6 +82,12 @@ fn pack_keeps_only_the_manifest_and_dist_contents() {
     ];
     expected.sort();
     assert_eq!(names, expected);
+    assert_eq!(report.archive_path, target.join(BAD_ARCHIVE));
+    assert_eq!(report.files_written, 3);
+    assert_eq!(
+        report.ignored_files,
+        vec![PathBuf::from(".gitignore"), PathBuf::from("outside/secret.txt"),]
+    );
 }
 
 #[test]
@@ -101,12 +101,7 @@ fn pack_collects_files_from_nested_dist_directories() {
     let middle = source.join("dist").join("src");
     write_file(&middle.join("sibling.ts"), "// sibling\n");
     let target = root.path().join("target");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
     let archive = target.join(BAD_ARCHIVE);
     let mut names = archive_entry_names(&archive);
     names.sort();
@@ -118,6 +113,7 @@ fn pack_collects_files_from_nested_dist_directories() {
     ];
     expected.sort();
     assert_eq!(names, expected);
+    assert_eq!(report.files_written, 4);
 }
 
 #[test]
@@ -129,13 +125,10 @@ fn pack_creates_van_archive() {
     };
     let source =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/test-plugin");
-    let command = PackCommand::new(source, target_dir.path().to_path_buf());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, target_dir.path());
     let archive = target_dir.path().join(EXPECTED_ARCHIVE);
+    assert_eq!(report.archive_path, archive);
+    assert_eq!(report.files_written, 2);
     assert!(archive.is_file());
 }
 
@@ -364,12 +357,9 @@ fn pack_overwrites_existing_regular_archive() {
     create_dir(&target);
     let archive = target.join(BAD_ARCHIVE);
     write_file(&archive, "stale\n");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
+    assert!(report.overwrote_existing);
+    assert!(!report.target_created);
     let content = fs::read(&archive);
     let written = match content {
         Ok(value) => value,
@@ -430,12 +420,8 @@ fn pack_clears_a_leftover_temporary_file() {
     let stale =
         target.join(format!("{BAD_ARCHIVE}.tmp-{}", std::process::id()));
     write_file(&stale, "stale leftover\n");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
+    assert!(!report.target_created);
     assert!(archive.is_file());
     assert!(!stale.exists());
     assert_no_temp_files(&target);
@@ -450,13 +436,9 @@ fn pack_archives_the_validated_manifest_bytes() {
     write_file(&dist.join("app.ts"), "// placeholder\n");
     write_file(&source.join("manifest.json"), RAW_MANIFEST);
     let target = root.path().join("target");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
     let archive = target.join("raw-plugin-2.0.0.van");
+    assert_eq!(report.archive_path, archive);
     let archived = read_archive_entry(&archive, "manifest.json");
     assert_eq!(archived.as_slice(), RAW_MANIFEST.as_bytes());
 }
@@ -469,13 +451,9 @@ fn pack_streams_source_files_in_chunks() {
     let payload = "chunked payload line\n".repeat(1024);
     write_file(&source.join("dist").join("app.ts"), &payload);
     let target = root.path().join("target");
-    let command = PackCommand::new(source, target.clone());
-    let result = command.run();
-    match result {
-        Ok(()) => {}
-        Err(error) => panic!("pack failed: {error}"),
-    }
+    let report = pack_report(&source, &target);
     let archive = target.join(BAD_ARCHIVE);
+    assert_eq!(report.files_written, 2);
     let archived = read_archive_entry(&archive, "dist/app.ts");
     assert_eq!(archived.as_slice(), payload.as_bytes());
 }
@@ -713,12 +691,22 @@ fn remove_entrypoint_file(entrypoint: &Path) {
     }
 }
 
+/// Run `pack` and return the report it must produce.
+fn pack_report(source: &Path, target: &Path) -> PackReport {
+    let command = PackCommand::new(source.to_path_buf(), target.to_path_buf());
+    let result = command.run();
+    return match result {
+        Ok(value) => value,
+        Err(error) => panic!("pack failed: {error}"),
+    };
+}
+
 /// Run `pack` and return the error it must produce.
 fn pack_error(source: &Path, target: &Path) -> Error {
     let command = PackCommand::new(source.to_path_buf(), target.to_path_buf());
     let result = command.run();
     return match result {
-        Ok(()) => panic!("expected packing to be rejected"),
+        Ok(_) => panic!("expected packing to be rejected"),
         Err(value) => value,
     };
 }

@@ -2,23 +2,16 @@
 //!
 //! The command opens an existing `.van` archive and validates it
 //! without extracting anything. The checks themselves live in
-//! [`validation`], and the report a valid archive produces lives in
-//! [`report`]; this module only holds the command and the data a
+//! [`validation`]; this module holds the command and the report a
 //! successful check produced.
 
 use std::path::PathBuf;
 
 use crate::common::Error;
 use crate::common::cli::CliCommand;
-use crate::common::command::Command;
 use crate::common::manifest::Manifest;
-use crate::tui::progress::show_progress;
 
-mod cli;
-mod report;
 mod validation;
-
-pub use cli::run_cli;
 
 /// The `verify` command.
 ///
@@ -32,8 +25,8 @@ pub use cli::run_cli;
 /// same checks `pack` applies, and `dist/` must contain the manifest
 /// entrypoint. The archive path itself must be a regular file, so a
 /// symbolic link, a FIFO, or a device is refused instead of being
-/// opened. A valid archive is reported with its manifest and its
-/// contents as a tree.
+/// opened. A valid archive produces a [`VerifyReport`] with its
+/// manifest and its entry names.
 #[non_exhaustive]
 pub struct VerifyCommand {
     /// The `.van` archive to verify; must be a regular file.
@@ -41,22 +34,16 @@ pub struct VerifyCommand {
 }
 
 /// Everything a successful archive check produced.
-struct ArchiveCheck {
-    /// Entry names as the archive listed them; the report sorts them in
-    /// place.
-    names: Vec<String>,
+#[non_exhaustive]
+pub struct VerifyReport {
+    /// The archive that was checked.
+    pub source: PathBuf,
     /// The parsed and validated manifest.
-    manifest: Manifest,
+    pub manifest: Manifest,
     /// The exact manifest bytes that passed validation.
-    manifest_bytes: Vec<u8>,
-}
-
-impl Command for VerifyCommand {
-    fn run(&self) -> Result<(), Error> {
-        show_progress();
-        let mut check = validation::inspect(&self.source)?;
-        return report::print_report(&self.source, &mut check);
-    }
+    pub manifest_bytes: Vec<u8>,
+    /// Entry names as the archive listed them, in archive order.
+    pub entry_names: Vec<String>,
 }
 
 impl VerifyCommand {
@@ -65,6 +52,18 @@ impl VerifyCommand {
         return Self {
             source,
         };
+    }
+
+    /// Run the command and return what it found.
+    ///
+    /// The command writes nothing; the caller decides how to report the
+    /// result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first validation or runtime error the checks produce.
+    pub fn run(&self) -> Result<VerifyReport, Error> {
+        return validation::inspect(&self.source);
     }
 }
 

@@ -28,7 +28,7 @@ use crate::common::validation::{
     escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
 };
 
-use super::ArchiveCheck;
+use super::VerifyReport;
 
 /// Mask that selects the file-type bits of a Unix mode.
 const FILE_TYPE_MASK: u32 = 0o170000;
@@ -81,7 +81,7 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// # Errors
 ///
 /// Returns the first validation or runtime error the checks produce.
-pub(super) fn inspect(source: &Path) -> Result<ArchiveCheck, Error> {
+pub(super) fn inspect(source: &Path) -> Result<VerifyReport, Error> {
     require_regular_source(source)?;
     let file = match File::open(source) {
         Ok(value) => value,
@@ -107,10 +107,11 @@ pub(super) fn inspect(source: &Path) -> Result<ArchiveCheck, Error> {
         read_manifest(&mut archive, manifest_index, source)?;
     require_dist(&names, source)?;
     require_entrypoint(&names, &manifest)?;
-    return Ok(ArchiveCheck {
-        names,
+    return Ok(VerifyReport {
+        source: source.to_path_buf(),
         manifest,
         manifest_bytes,
+        entry_names: names,
     });
 }
 

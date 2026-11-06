@@ -1,4 +1,4 @@
-//! Terminal user interface helpers.
+//! Terminal user interface helpers for the `van` binary.
 //!
 //! The module collects presentation code: [`progress`] draws the
 //! cosmetic animation the subcommands share before their real work
