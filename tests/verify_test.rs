@@ -36,6 +36,9 @@ const WRITE_CHUNK_BYTES: usize = 64 * 1024;
 /// Number of `dist` entries written above the archive entry budget.
 const OVERSIZED_ENTRY_COUNT: usize = 4096 + 1;
 
+/// External attributes that mark an entry as a directory (`0o040755`).
+const DIRECTORY_EXTERNAL_ATTRIBUTES: u32 = 0o040755 << 16;
+
 #[test]
 fn verify_accepts_a_packed_archive() {
     let root = temp_root();
@@ -115,6 +118,18 @@ fn verify_rejects_symlink_entries() {
     assert_validation_message(
         error,
         "Symlinks are not allowed in the archive: dist/link.ts",
+    );
+}
+
+#[test]
+fn verify_rejects_directory_entries() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_directory_typed_archive(&archive);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Non-regular files are not allowed in the archive: dist/app.ts",
     );
 }
 
@@ -562,6 +577,21 @@ fn write_symlink_archive(path: &Path, name: &str, target: &str) {
         Ok(()) => {}
         Err(error) => panic!("failed to add the symlink {name}: {error}"),
     }
+    finish_archive(writer, path);
+}
+
+/// Write an archive whose `dist/app.ts` entry declares a directory.
+fn write_directory_typed_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let regular = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+    start_file(&mut writer, "manifest.json", regular);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    let directory = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .external_attributes(DIRECTORY_EXTERNAL_ATTRIBUTES);
+    start_file(&mut writer, "dist/app.ts", directory);
+    write_content(&mut writer, "// content\n");
     finish_archive(writer, path);
 }
 
