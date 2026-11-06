@@ -2,7 +2,8 @@
 //!
 //! The command opens an existing `.van` archive and validates it
 //! without extracting anything: every entry name is checked with the
-//! shared archive rules, symbolic links are rejected, the archived
+//! shared archive rules, every entry is read through so its data and
+//! CRC-32 are validated, symbolic links are rejected, the archived
 //! `manifest.json` is validated with the rules the `pack` command
 //! applies, and the `dist/` directory and its entrypoint must exist.
 //! A valid archive is reported with its manifest and its contents as a
@@ -15,6 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
+use zip::read::ZipFile;
 
 use crate::common::Error;
 use crate::common::cli::CliCommand;
@@ -36,6 +38,26 @@ const FILE_TYPE_MASK: u32 = 0o170000;
 /// File-type bits of a symbolic link in a Unix mode.
 const SYMLINK_FILE_TYPE: u32 = 0o120000;
 
+/// Size of the buffer used to read one archive entry.
+const COPY_BUFFER_BYTES: usize = 8 * 1024;
+
+/// Bytes in one mebibyte, used to render the budgets in diagnostics.
+const MEBIBYTE: u64 = 1024 * 1024;
+
+/// Largest decompressed size accepted for a single archive entry, in
+/// bytes.
+///
+/// The entry data is read in full, so an entry that expands to an
+/// unbounded size would let a crafted archive exhaust memory or CPU.
+/// The limit stays far above any plausible plugin payload.
+const MAX_ENTRY_BYTES: u64 = 64 * MEBIBYTE;
+
+/// Largest total decompressed size accepted for one archive, in bytes.
+///
+/// Every entry of the archive is read, so the total bounds the work a
+/// single `verify` run can be made to do.
+const MAX_TOTAL_BYTES: u64 = 256 * MEBIBYTE;
+
 /// Name of the manifest file expected at the archive root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 
@@ -47,9 +69,11 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// Opens the archive at `source` and validates its structure without
 /// extracting it: every entry name must be a safe relative path, no
 /// entry may carry a `node_modules` component, no entry may be a
-/// symbolic link, the manifest must pass the same checks `pack`
-/// applies, and `dist/` must contain the manifest entrypoint. A valid
-/// archive is reported with its manifest and its contents as a tree.
+/// symbolic link, every entry must decompress to bytes that match its
+/// CRC-32 within the decompressed-size budgets, the manifest must pass
+/// the same checks `pack` applies, and `dist/` must contain the
+/// manifest entrypoint. A valid archive is reported with its manifest
+/// and its contents as a tree.
 #[non_exhaustive]
 pub struct VerifyCommand {
     /// The `.van` archive to verify.
@@ -137,16 +161,23 @@ impl VerifyCommand {
         });
     }
 
-    /// Validate every entry name and collect the entry names.
+    /// Validate every entry name, read the entry data, and collect the
+    /// entry names.
+    ///
+    /// Reading each entry to the end makes the ZIP library check the
+    /// local header, the compressed stream, and its CRC-32, so an
+    /// archive with corrupt or truncated data is rejected here instead
+    /// of failing later during installation.
     fn collect_entry_names(
         &self,
         archive: &mut ZipArchive<File>,
     ) -> Result<Vec<String>, Error> {
         let count = archive.len();
         let mut names: Vec<String> = Vec::new();
+        let mut total_bytes: u64 = 0;
         for index in 0..count {
             let entry = archive.by_index(index);
-            let entry = match entry {
+            let mut entry = match entry {
                 Ok(value) => value,
                 Err(error) => {
                     return Err(Error::Runtime(format!(
@@ -167,6 +198,7 @@ impl VerifyCommand {
             validate_archive_entry(&name)?;
             validate_no_node_modules(Path::new(&name))?;
             reject_symlink(&name, entry.unix_mode())?;
+            read_entry_data(&mut entry, &name, &self.source, &mut total_bytes)?;
             names.push(name);
         }
         return Ok(names);
@@ -208,6 +240,73 @@ impl VerifyCommand {
         let manifest = Manifest::from_bytes(&bytes)?;
         return Ok((manifest, bytes));
     }
+}
+
+/// Read one entry to the end so its data and checksum are validated.
+///
+/// `total_bytes` accumulates the decompressed size of every entry read
+/// so far. The declared size is checked first, so an oversized entry is
+/// rejected before it is decompressed, and the streamed bytes are
+/// counted again because a header may understate its own length. The
+/// data is never held in memory as a whole.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the entry exceeds a budget,
+/// and when its data cannot be read or does not match its CRC-32.
+fn read_entry_data(
+    entry: &mut ZipFile<'_, File>,
+    name: &str,
+    source: &Path,
+    total_bytes: &mut u64,
+) -> Result<(), Error> {
+    let declared = entry.size();
+    if declared > MAX_ENTRY_BYTES {
+        return Err(entry_too_large(name));
+    }
+    let remaining = MAX_TOTAL_BYTES.saturating_sub(*total_bytes);
+    if declared > remaining {
+        return Err(contents_too_large(source));
+    }
+    let mut buffer = [0u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = entry.read(&mut buffer);
+        let count = match read {
+            Ok(0) => return Ok(()),
+            Ok(value) => value,
+            Err(error) => {
+                return Err(Error::ValidationError(format!(
+                    "Failed to read entry data for {} in {}: {error}",
+                    escape_text(name),
+                    escape_path(source)
+                )));
+            }
+        };
+        let read_bytes = count as u64;
+        *total_bytes = total_bytes.saturating_add(read_bytes);
+        if *total_bytes > MAX_TOTAL_BYTES {
+            return Err(contents_too_large(source));
+        }
+    }
+}
+
+/// Build the error for an entry above the per-entry decompressed
+/// budget.
+fn entry_too_large(name: &str) -> Error {
+    let limit = MAX_ENTRY_BYTES / MEBIBYTE;
+    return Error::ValidationError(format!(
+        "Archive entry is larger than the {limit} MiB limit: {}",
+        escape_text(name)
+    ));
+}
+
+/// Build the error for an archive above the total decompressed budget.
+fn contents_too_large(source: &Path) -> Error {
+    let limit = MAX_TOTAL_BYTES / MEBIBYTE;
+    return Error::ValidationError(format!(
+        "Archive contents are larger than the {limit} MiB limit: {}",
+        escape_path(source)
+    ));
 }
 
 impl CliCommand for VerifyCommand {

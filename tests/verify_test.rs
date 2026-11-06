@@ -22,6 +22,12 @@ const SAMPLE_ARCHIVE: &str = "sample.van";
 /// Manifest used by the archives that are expected to be valid.
 const SAMPLE_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
 
+/// Decompressed size of the entry written above the per-entry budget.
+const OVERSIZED_ENTRY_BYTES: usize = 64 * 1024 * 1024 + 1;
+
+/// Size of the chunk used to write the oversized entry.
+const WRITE_CHUNK_BYTES: usize = 64 * 1024;
+
 #[test]
 fn verify_accepts_a_packed_archive() {
     let root = temp_root();
@@ -117,6 +123,37 @@ fn verify_accepts_regular_entries_with_permissions() {
         Ok(()) => {}
         Err(error) => panic!("verify failed: {error}"),
     }
+}
+
+#[test]
+fn verify_rejects_corrupt_entry_data() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_stored_archive(&archive);
+    replace_bytes(&archive, b"// content\n", b"// corrupt\n");
+    let error = verify_error(&archive);
+    let message = validation_message(error);
+    assert!(
+        message.contains("Failed to read entry data for dist/app.ts"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        message.contains("Invalid checksum"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn verify_rejects_entry_above_the_decompressed_budget() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_oversized_archive(&archive);
+    let error = verify_error(&archive);
+    let message = validation_message(error);
+    assert_eq!(
+        message,
+        "Archive entry is larger than the 64 MiB limit: dist/app.ts"
+    );
 }
 
 #[test]
@@ -269,6 +306,89 @@ fn write_minimal_archive(path: &Path) {
     write_archive(path, &entries);
 }
 
+/// Write an archive whose entry content is stored unchanged.
+///
+/// Storing the content leaves the bytes of the entry in the file as
+/// written, so a test can corrupt one entry without breaking any ZIP
+/// offset or the central directory.
+fn write_stored_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored);
+    start_file(&mut writer, "manifest.json", options);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    start_file(&mut writer, "dist/app.ts", options);
+    write_content(&mut writer, "// content\n");
+    finish_archive(writer, path);
+}
+
+/// Write an archive with one `dist` entry above the per-entry budget.
+fn write_oversized_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+    start_file(&mut writer, "manifest.json", options);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    start_file(&mut writer, "dist/app.ts", options);
+    let chunk = [0u8; WRITE_CHUNK_BYTES];
+    let mut remaining = OVERSIZED_ENTRY_BYTES;
+    while remaining > 0 {
+        let count = remaining.min(WRITE_CHUNK_BYTES);
+        let slice = match chunk.get(..count) {
+            Some(value) => value,
+            None => panic!("chunk exceeds the buffer"),
+        };
+        let written = writer.write_all(slice);
+        match written {
+            Ok(()) => {}
+            Err(error) => panic!("failed to write entry content: {error}"),
+        }
+        remaining -= count;
+    }
+    finish_archive(writer, path);
+}
+
+/// Replace the first occurrence of `old` with `new` inside `path`.
+///
+/// Both slices must have the same length so every ZIP offset stays
+/// valid and only the matched bytes change.
+fn replace_bytes(path: &Path, old: &[u8], new: &[u8]) {
+    if old.len() != new.len() {
+        panic!("replacement must preserve the length");
+    }
+    let loaded = fs::read(path);
+    let mut bytes = match loaded {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {}: {error}", path.display()),
+    };
+    let mut start = 0;
+    loop {
+        let end = start + old.len();
+        let candidate = match bytes.get(start..end) {
+            Some(value) => value,
+            None => {
+                panic!("content to replace not found in {}", path.display())
+            }
+        };
+        if candidate == old {
+            let target = match bytes.get_mut(start..end) {
+                Some(value) => value,
+                None => {
+                    panic!("failed to replace bytes in {}", path.display());
+                }
+            };
+            target.copy_from_slice(new);
+            break;
+        }
+        start += 1;
+    }
+    let written = fs::write(path, &bytes);
+    match written {
+        Ok(()) => {}
+        Err(error) => panic!("failed to write {}: {error}", path.display()),
+    }
+}
+
 /// Write an archive holding `entries` in the given order.
 fn write_archive(path: &Path, entries: &[(&str, &str)]) {
     let mut writer = create_writer(path);
@@ -365,6 +485,14 @@ fn verify_error(archive: &Path) -> Error {
     return match result {
         Ok(()) => panic!("expected verification to be rejected"),
         Err(value) => value,
+    };
+}
+
+/// Return the message of a validation error.
+fn validation_message(error: Error) -> String {
+    return match error {
+        Error::ValidationError(value) => value,
+        other => panic!("unexpected error: {other}"),
     };
 }
 
