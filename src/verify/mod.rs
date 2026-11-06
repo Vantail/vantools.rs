@@ -2,8 +2,9 @@
 //!
 //! The command opens an existing `.van` archive and validates it
 //! without extracting anything: every entry name is checked with the
-//! shared archive rules, every entry is read through so its data and
-//! CRC-32 are validated, symbolic links are rejected, the archived
+//! shared archive rules, every entry name must be unique, every entry
+//! is read through so its data and CRC-32 are validated, symbolic
+//! links are rejected, the archived
 //! `manifest.json` is validated with the rules the `pack` command
 //! applies, and the `dist/` directory and its entrypoint must exist.
 //! A valid archive is reported with its manifest and its contents as a
@@ -15,6 +16,7 @@
 //! unbounded data.
 
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -85,8 +87,9 @@ const DIST_DIRECTORY_NAME: &str = "dist";
 /// The `verify` command.
 ///
 /// Opens the archive at `source` and validates its structure without
-/// extracting it: every entry name must be a safe relative path, no
-/// entry may carry a `node_modules` component, every entry must be a
+/// extracting it: every entry name must be a safe relative path and
+/// unique within the archive, no entry may carry a `node_modules`
+/// component, every entry must be a
 /// regular file, every entry must decompress to bytes that match its
 /// CRC-32 within the decompressed-size budgets, the archive must hold
 /// no more than the entry-count budget, the manifest must pass the
@@ -180,9 +183,9 @@ impl VerifyCommand {
                 )));
             }
         };
-        let names = self.collect_entry_names(&mut archive)?;
+        let (names, manifest_index) = self.collect_entry_names(&mut archive)?;
         let (manifest, manifest_bytes) =
-            self.read_manifest(&mut archive, &names)?;
+            self.read_manifest(&mut archive, manifest_index)?;
         require_dist(&names, &self.source)?;
         require_entrypoint(&names, &manifest)?;
         return Ok(ArchiveCheck {
@@ -203,15 +206,33 @@ impl VerifyCommand {
     /// The entry count is checked before any entry is read, so an
     /// archive holding an excessive number of entries is rejected
     /// without allocating a name per entry.
+    ///
+    /// Entry names must be unique, as Section 6 of `docs/SPEC.md`
+    /// requires. Byte-identical duplicates are rejected before any
+    /// entry is read, and every decoded name is checked against the
+    /// names already seen, because the reader decodes a name written in
+    /// another encoding to the same string: an entry stored as CP437
+    /// and one stored as UTF-8 can report one name while keeping
+    /// different bytes. Either way, the payload this run validates
+    /// could differ from the payload another consumer extracts under
+    /// that name.
+    ///
+    /// The returned index is the position of the `manifest.json` entry,
+    /// so the manifest is later read from exactly that entry.
     fn collect_entry_names(
         &self,
         archive: &mut ZipArchive<File>,
-    ) -> Result<Vec<String>, Error> {
+    ) -> Result<(Vec<String>, Option<usize>), Error> {
         let count = archive.len();
         if count > MAX_ENTRY_COUNT {
             return Err(too_many_entries(&self.source));
         }
+        if archive.has_duplicate_names() {
+            return Err(duplicate_entry(&self.source));
+        }
         let mut names: Vec<String> = Vec::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut manifest_index: Option<usize> = None;
         let mut total_bytes: u64 = 0;
         for index in 0..count {
             let entry = archive.by_index(index);
@@ -233,28 +254,43 @@ impl VerifyCommand {
                     )));
                 }
             };
+            if !seen.insert(name.clone()) {
+                return Err(duplicate_entry(&self.source));
+            }
             validate_archive_entry(&name)?;
             validate_no_node_modules(Path::new(&name))?;
+            if name == MANIFEST_FILE_NAME {
+                manifest_index = Some(index);
+            }
             reject_non_regular(&name, entry.unix_mode())?;
             read_entry_data(&mut entry, &name, &self.source, &mut total_bytes)?;
             names.push(name);
         }
-        return Ok(names);
+        return Ok((names, manifest_index));
     }
 
     /// Read the archived manifest and validate its bytes.
+    ///
+    /// The entry is selected by the index [`VerifyCommand::
+    /// collect_entry_names`] recorded rather than by name, so the bytes
+    /// validated here are the bytes of the entry whose name passed the
+    /// uniqueness and path checks. A name-based lookup could resolve to
+    /// a different entry than the one that was validated.
     fn read_manifest(
         &self,
         archive: &mut ZipArchive<File>,
-        names: &[String],
+        manifest_index: Option<usize>,
     ) -> Result<(Manifest, Vec<u8>), Error> {
-        if !entry_present(names, MANIFEST_FILE_NAME) {
-            return Err(Error::ValidationError(format!(
-                "Missing 'manifest.json' in archive: {}",
-                escape_path(&self.source)
-            )));
-        }
-        let entry = match archive.by_name(MANIFEST_FILE_NAME) {
+        let index = match manifest_index {
+            Some(value) => value,
+            None => {
+                return Err(Error::ValidationError(format!(
+                    "Missing 'manifest.json' in archive: {}",
+                    escape_path(&self.source)
+                )));
+            }
+        };
+        let entry = match archive.by_index(index) {
             Ok(value) => value,
             Err(error) => {
                 return Err(Error::Runtime(format!(
@@ -406,14 +442,16 @@ impl CliCommand for VerifyCommand {
     }
 }
 
-/// Return true when `names` holds an entry named `expected`.
-fn entry_present(names: &[String], expected: &str) -> bool {
-    for name in names {
-        if name == expected {
-            return true;
-        }
-    }
-    return false;
+/// Build the error for an archive that lists one entry name twice.
+///
+/// The byte-level check reports only that duplicates are present, not
+/// which name repeats, so both checks share this diagnostic, which
+/// names the archive instead.
+fn duplicate_entry(source: &Path) -> Error {
+    return Error::ValidationError(format!(
+        "Duplicate archive entry names are not allowed: {}",
+        escape_path(source)
+    ));
 }
 
 /// Return an error unless the entry mode marks a regular file.

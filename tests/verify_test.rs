@@ -135,6 +135,45 @@ fn verify_rejects_directory_entries() {
 }
 
 #[test]
+fn verify_rejects_duplicate_entry_names() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_duplicate_entry_archive(&archive);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_a_duplicate_manifest_entry() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_duplicate_manifest_archive(&archive);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_duplicate_names_differing_in_encoding() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_mixed_encoding_duplicate_archive(&archive);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
 fn verify_accepts_regular_entries_with_permissions() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -568,6 +607,49 @@ fn replace_bytes(path: &Path, old: &[u8], new: &[u8]) {
     }
 }
 
+/// Replace every occurrence of `old` with `new` inside `path`.
+///
+/// Both slices must have the same length so every ZIP offset stays
+/// valid and only the matched bytes change.
+fn replace_all_bytes(path: &Path, old: &[u8], new: &[u8]) {
+    if old.len() != new.len() {
+        panic!("replacement must preserve the length");
+    }
+    let loaded = fs::read(path);
+    let mut bytes = match loaded {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {}: {error}", path.display()),
+    };
+    let mut start = 0;
+    let mut replaced = false;
+    loop {
+        let end = start + old.len();
+        let candidate = match bytes.get(start..end) {
+            Some(value) => value,
+            None => break,
+        };
+        if candidate == old {
+            let target = match bytes.get_mut(start..end) {
+                Some(value) => value,
+                None => {
+                    panic!("failed to replace bytes in {}", path.display());
+                }
+            };
+            target.copy_from_slice(new);
+            replaced = true;
+        }
+        start += 1;
+    }
+    if !replaced {
+        panic!("content to replace not found in {}", path.display());
+    }
+    let written = fs::write(path, &bytes);
+    match written {
+        Ok(()) => {}
+        Err(error) => panic!("failed to write {}: {error}", path.display()),
+    }
+}
+
 /// Write an archive holding `entries` in the given order.
 fn write_archive(path: &Path, entries: &[(&str, &str)]) {
     let mut writer = create_writer(path);
@@ -578,6 +660,60 @@ fn write_archive(path: &Path, entries: &[(&str, &str)]) {
         write_content(&mut writer, content);
     }
     finish_archive(writer, path);
+}
+
+/// Write an archive whose `dist/app.ts` name appears twice.
+///
+/// The ZIP writer refuses to add one name twice, so the second entry is
+/// written under a decoy name of the same length and its name bytes are
+/// rewritten afterwards. Every ZIP offset stays valid because the name
+/// keeps its length, and no checksum covers an entry name.
+fn write_duplicate_entry_archive(path: &Path) {
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/appXts", "// shadowing content\n"),
+    ];
+    write_archive(path, &entries);
+    replace_all_bytes(path, b"appXts", b"app.ts");
+}
+
+/// Write an archive whose `manifest.json` name appears twice.
+///
+/// The second entry carries a different but still valid manifest, so a
+/// consumer that resolves the name differently would validate a
+/// different plugin than the first entry describes.
+fn write_duplicate_manifest_archive(path: &Path) {
+    let second_manifest = concat!(
+        "{\"name\":\"other-plugin\",",
+        "\"version\":\"9.9.9\",",
+        "\"entrypoint\":\"app.ts\"}"
+    );
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("manifestXjson", second_manifest),
+    ];
+    write_archive(path, &entries);
+    replace_all_bytes(path, b"manifestXjson", b"manifest.json");
+}
+
+/// Write an archive that reports one decoded name twice.
+///
+/// The first `dist/café.ts` is stored as UTF-8 and the second one is
+/// stored under a decoy name whose bytes are rewritten to CP437, so the
+/// two central directory names differ while the reader decodes both to
+/// `dist/café.ts`. A byte-level duplicate check cannot see this case
+/// because the raw names differ.
+fn write_mixed_encoding_duplicate_archive(path: &Path) {
+    let entries: [(&str, &str); 4] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/café.ts", "// utf8 content\n"),
+        ("dist/cafX.ts", "// cp437 content\n"),
+    ];
+    write_archive(path, &entries);
+    replace_all_bytes(path, b"cafX", b"caf\x82");
 }
 
 /// Write an archive holding `entries` with the given Unix permissions.
