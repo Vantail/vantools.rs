@@ -214,6 +214,27 @@ fn pack_accepts_short_flags() {
 
 #[cfg(unix)]
 #[test]
+fn pack_escapes_control_characters_in_created_target_path() {
+    let root = temp_root();
+    let target = root.path().join("out\u{1b}[31m\nspoofed");
+    let target_path = match target.to_str() {
+        Some(value) => value,
+        None => panic!("temporary directory path is not valid Unicode"),
+    };
+    let output =
+        run(&["pack", "-s", "examples/test-plugin", "-t", target_path]);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The control characters of the created directory name must be
+    // rendered as escapes, never emitted raw or as an extra line.
+    assert!(!stdout.contains('\u{1b}'));
+    assert!(stdout.contains("created target directory: "));
+    assert!(stdout.contains("out\\u{1b}[31m\\nspoofed"));
+    assert!(target.join("test-plugin-0.1.0.van").is_file());
+}
+
+#[cfg(unix)]
+#[test]
 fn non_unicode_argument_is_rejected_without_panicking() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
