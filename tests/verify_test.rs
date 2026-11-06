@@ -10,6 +10,7 @@ use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
 use vantools::common::command::Command;
+use vantools::common::validation::escape_manifest;
 use vantools::pack::PackCommand;
 use vantools::verify::VerifyCommand;
 use zip::CompressionMethod;
@@ -21,6 +22,10 @@ const SAMPLE_ARCHIVE: &str = "sample.van";
 
 /// Manifest used by the archives that are expected to be valid.
 const SAMPLE_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
+
+/// Manifest whose text carries the JSON escape sequence for a control
+/// character instead of the control character itself.
+const ESCAPED_CONTROL_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\",\"description\":\"\\u001b[31mred\"}";
 
 /// Decompressed size of the entry written above the per-entry budget.
 const OVERSIZED_ENTRY_BYTES: usize = 64 * 1024 * 1024 + 1;
@@ -260,6 +265,43 @@ fn verify_cli_prints_a_tree() {
     assert!(stdout.contains("│   └── app.ts"));
     assert!(stdout.contains("└── manifest.json"));
     assert!(stdout.contains("Archive is valid."));
+}
+
+#[test]
+fn manifest_text_escapes_control_characters() {
+    let text = String::from("{\"name\":\"a\u{1b}[31m\u{7}\"}");
+    let escaped = escape_manifest(&text);
+    assert!(!escaped.contains('\u{1b}'));
+    assert!(!escaped.contains('\u{7}'));
+    assert!(escaped.contains("\\u{1b}"));
+    assert!(!escaped.contains('\n'));
+}
+
+#[test]
+fn manifest_text_keeps_line_breaks() {
+    let text = String::from("{\n  \"name\": \"a\"\n}\n");
+    let escaped = escape_manifest(&text);
+    assert_eq!(escaped, text);
+}
+
+#[test]
+fn verify_cli_keeps_manifest_escape_sequences_readable() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 2] = [
+        ("manifest.json", ESCAPED_CONTROL_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+    ];
+    write_archive(&archive, &entries);
+    let archive_path = match archive.to_str() {
+        Some(value) => value,
+        None => panic!("archive path is not valid Unicode"),
+    };
+    let output = run_van(&["verify", "--source", archive_path]);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\\u001b[31mred"));
+    assert!(!stdout.contains('\u{1b}'));
 }
 
 #[test]
