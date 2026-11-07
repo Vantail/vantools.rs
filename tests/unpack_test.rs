@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use tempfile::TempDir;
 use tempfile::tempdir;
@@ -22,6 +23,10 @@ const SAMPLE_FOLDER: &str = "sample-plugin-0.1.0";
 
 /// Manifest used by the archives that are expected to be valid.
 const SAMPLE_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
+
+/// Size of the entry that keeps extraction running while the archive
+/// path is replaced.
+const SLOW_ENTRY_BYTES: usize = 32 * 1024 * 1024;
 
 #[test]
 fn unpack_rejects_an_archive_without_a_manifest() {
@@ -226,6 +231,89 @@ fn unpack_rejects_a_symlinked_target() {
     assert_validation_message(error, &expected);
     assert!(!real_target.join(SAMPLE_FOLDER).exists());
     assert_no_temp_entries(&real_target);
+}
+
+#[cfg(unix)]
+#[test]
+fn extraction_reads_the_handle_that_was_validated() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let mut content = String::from("// validated\n");
+    content.push_str(&"a".repeat(SLOW_ENTRY_BYTES));
+    write_archive(
+        &archive,
+        &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", &content)],
+    );
+    let replacement = root.path().join("replacement.van");
+    write_archive(
+        &replacement,
+        &[
+            ("manifest.json", SAMPLE_MANIFEST),
+            ("dist/app.ts", "// swapped\n"),
+            ("dist/../escaped.ts", "// escaped\n"),
+        ],
+    );
+    let target = root.path().join("out");
+    let destination = target.join(SAMPLE_FOLDER);
+    let worker_archive = archive.clone();
+    let worker_target = target.clone();
+    let worker = thread::spawn(move || {
+        let command = UnpackCommand::new(worker_archive, worker_target);
+        return command.run();
+    });
+    let swapped = replace_during_extraction(
+        &worker,
+        &archive,
+        &replacement,
+        &destination,
+    );
+    let joined = worker.join();
+    let result = match joined {
+        Ok(value) => value,
+        Err(_) => panic!("the unpack thread panicked"),
+    };
+    let report = match result {
+        Ok(value) => value,
+        Err(error) => panic!("unpack failed: {error}"),
+    };
+    assert!(swapped, "the archive was not replaced before extraction finished");
+    assert_eq!(report.files_written, 2);
+    assert_file_content(&destination.join("dist").join("app.ts"), &content);
+    assert!(!destination.join("escaped.ts").exists());
+}
+
+/// Replace `archive` while its extraction is still running.
+///
+/// The temporary extraction directory appears after validation and
+/// stays until the finished directory is renamed into place, so it
+/// gives the moment to swap the path. Returns whether the replacement
+/// happened before the destination existed.
+#[cfg(unix)]
+fn replace_during_extraction(
+    worker: &thread::JoinHandle<Result<UnpackReport, Error>>,
+    archive: &Path,
+    replacement: &Path,
+    destination: &Path,
+) -> bool {
+    let temporary = temporary_path(destination);
+    loop {
+        if destination.exists() {
+            return false;
+        }
+        if temporary.exists() {
+            let replaced = fs::rename(replacement, archive);
+            match replaced {
+                Ok(()) => return !destination.exists(),
+                Err(error) => {
+                    panic!("failed to replace {}: {error}", archive.display());
+                }
+            }
+        }
+        if worker.is_finished() {
+            return false;
+        }
+        thread::yield_now();
+    }
 }
 
 #[test]

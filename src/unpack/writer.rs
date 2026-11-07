@@ -26,13 +26,11 @@ use zip::ZipArchive;
 use zip::read::ZipFile;
 
 use crate::common::Error;
+use crate::common::plugin::MANIFEST_FILE_NAME;
 use crate::common::validation::escape_path;
 
 /// Size of the buffer used to copy one archive entry to disk.
 const COPY_BUFFER_BYTES: usize = 8 * 1024;
-
-/// Name of the manifest file expected at the archive root.
-const MANIFEST_FILE_NAME: &str = "manifest.json";
 
 /// Extract every entry of an inspected archive into `destination_path`
 /// and return the number of files written.
@@ -472,129 +470,4 @@ fn install_directory(
 fn discard_temp_directory(path: &Path) {
     // Best effort; the original error is reported either way.
     let _ = fs::remove_dir_all(path);
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::fs;
-    use std::io::Write;
-    use std::path::Path;
-
-    use tempfile::tempdir;
-    use zip::CompressionMethod;
-    use zip::ZipWriter;
-    use zip::write::SimpleFileOptions;
-
-    use super::extract_archive;
-    use crate::common::archive;
-
-    /// Manifest used by the archives in these tests.
-    const MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
-
-    #[test]
-    fn extraction_reads_the_handle_that_was_validated() {
-        let root = match tempdir() {
-            Ok(value) => value,
-            Err(error) => {
-                panic!("failed to create a temporary directory: {error}");
-            }
-        };
-        let archive_path = root.path().join("sample.van");
-        let entries: [(&str, &str); 2] =
-            [("manifest.json", MANIFEST), ("dist/app.ts", "// validated\n")];
-        write_archive(&archive_path, &entries);
-        let mut handle = match archive::open(&archive_path) {
-            Ok(value) => value,
-            Err(error) => panic!("failed to open the archive: {error}"),
-        };
-        let inspected =
-            match archive::inspect_archive(&mut handle, &archive_path) {
-                Ok(value) => value,
-                Err(error) => panic!("the valid archive was rejected: {error}"),
-            };
-        // Replace the path with an archive that would fail validation.
-        let replacement = root.path().join("replacement.van");
-        let swapped: [(&str, &str); 3] = [
-            ("manifest.json", MANIFEST),
-            ("dist/app.ts", "// swapped\n"),
-            ("dist/../escaped.ts", "// escaped\n"),
-        ];
-        write_archive(&replacement, &swapped);
-        let replaced = fs::rename(&replacement, &archive_path);
-        match replaced {
-            Ok(()) => {}
-            Err(error) => panic!("failed to replace the archive: {error}"),
-        }
-        let target = root.path().join("out");
-        let created = fs::create_dir(&target);
-        match created {
-            Ok(()) => {}
-            Err(error) => {
-                panic!("failed to create {}: {error}", target.display());
-            }
-        }
-        let destination = target.join("sample-plugin-0.1.0");
-        let extracted = extract_archive(
-            &mut handle,
-            &archive_path,
-            &destination,
-            &inspected.manifest_bytes,
-        );
-        let written = match extracted {
-            Ok(value) => value,
-            Err(error) => panic!("extraction failed: {error}"),
-        };
-        assert_eq!(written, 2);
-        assert_file_content(
-            &destination.join("dist").join("app.ts"),
-            "// validated\n",
-        );
-        assert!(!destination.join("escaped.ts").exists());
-    }
-
-    /// Write an archive holding `entries` in the given order.
-    fn write_archive(path: &Path, entries: &[(&str, &str)]) {
-        let created = fs::File::create(path);
-        let file = match created {
-            Ok(value) => value,
-            Err(error) => {
-                panic!("failed to create {}: {error}", path.display());
-            }
-        };
-        let mut writer = ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated);
-        for (name, content) in entries {
-            let started = writer.start_file(*name, options);
-            match started {
-                Ok(()) => {}
-                Err(error) => panic!("failed to add {name}: {error}"),
-            }
-            let written = writer.write_all(content.as_bytes());
-            match written {
-                Ok(()) => {}
-                Err(error) => panic!("failed to write {name}: {error}"),
-            }
-        }
-        let finished = writer.finish();
-        match finished {
-            Ok(_) => {}
-            Err(error) => {
-                panic!("failed to finish {}: {error}", path.display());
-            }
-        }
-        return;
-    }
-
-    /// Read a file and compare it with the expected text.
-    fn assert_file_content(path: &Path, expected: &str) {
-        let content = fs::read(path);
-        let bytes = match content {
-            Ok(value) => value,
-            Err(error) => {
-                panic!("failed to read {}: {error}", path.display());
-            }
-        };
-        assert_eq!(bytes.as_slice(), expected.as_bytes());
-    }
 }
