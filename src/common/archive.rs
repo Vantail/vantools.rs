@@ -99,10 +99,33 @@ pub struct ArchiveContents {
 /// first failure ends the run, so an invalid archive is never partly
 /// reported and nothing downstream sees a half-validated result.
 ///
+/// The archive is opened once and inspected through that handle.
+/// Callers that also extract entries should use [`open`] and
+/// [`inspect_archive`] instead, so the extraction reads exactly the
+/// handle that was validated.
+///
 /// # Errors
 ///
 /// Returns the first validation or runtime error the checks produce.
 pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
+    let mut opened = open(source)?;
+    return inspect_archive(&mut opened, source);
+}
+
+/// Open the archive at `source` for reading.
+///
+/// The path must be a regular file, so a symbolic link, a FIFO, or a
+/// device is refused before it is opened. The handle must be inspected
+/// with [`inspect_archive`] before any entry is used, and a caller that
+/// also extracts entries must extract through this same handle: a path
+/// replaced after inspection could otherwise supply different bytes to
+/// the extraction than the ones that were validated.
+///
+/// # Errors
+///
+/// Returns the errors of the path check, and [`Error::Runtime`] when
+/// the archive cannot be opened or parsed.
+pub(crate) fn open(source: &Path) -> Result<ZipArchive<File>, Error> {
     require_regular_source(source)?;
     let file = match File::open(source) {
         Ok(value) => value,
@@ -114,18 +137,31 @@ pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
         }
     };
     let opened = ZipArchive::new(file);
-    let mut archive = match opened {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to read archive {}: {error}",
-                escape_path(source)
-            )));
-        }
+    return match opened {
+        Ok(value) => Ok(value),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to read archive {}: {error}",
+            escape_path(source)
+        ))),
     };
-    let (names, manifest_index) = collect_entry_names(&mut archive, source)?;
+}
+
+/// Run every check on an archive that was already opened.
+///
+/// The checks are the ones [`inspect`] runs: entry names, ZIP structure,
+/// the decompressed-size budgets, the manifest, and the `dist/`
+/// directory with its entrypoint. The first failure ends the run.
+///
+/// # Errors
+///
+/// Returns the first validation or runtime error the checks produce.
+pub(crate) fn inspect_archive(
+    archive: &mut ZipArchive<File>,
+    source: &Path,
+) -> Result<ArchiveContents, Error> {
+    let (names, manifest_index) = collect_entry_names(archive, source)?;
     let (manifest, manifest_bytes) =
-        read_manifest(&mut archive, manifest_index, source)?;
+        read_manifest(archive, manifest_index, source)?;
     require_dist(&names, source)?;
     require_entrypoint(&names, &manifest)?;
     return Ok(ArchiveContents {
