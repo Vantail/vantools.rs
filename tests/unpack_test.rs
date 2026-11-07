@@ -165,6 +165,54 @@ fn unpack_clears_a_leftover_temporary_directory() {
     assert_no_temp_entries(&target);
 }
 
+#[cfg(unix)]
+#[test]
+fn unpack_rejects_a_symlinked_target() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_archive(
+        &archive,
+        &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")],
+    );
+    let real_target = root.path().join("real");
+    create_dir(&real_target);
+    let target = root.path().join("out");
+    let linked = std::os::unix::fs::symlink(&real_target, &target);
+    match linked {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to create {}: {error}", target.display());
+        }
+    }
+    let error = unpack_error(&archive, &target);
+    let expected = format!(
+        "Target is a symlink or not a directory: {}",
+        escape_path(&target)
+    );
+    assert_validation_message(error, &expected);
+    assert!(!real_target.join(SAMPLE_FOLDER).exists());
+    assert_no_temp_entries(&real_target);
+}
+
+#[test]
+fn unpack_rejects_a_non_directory_target() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_archive(
+        &archive,
+        &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")],
+    );
+    let target = root.path().join("out");
+    write_file(&target, "not a directory\n");
+    let error = unpack_error(&archive, &target);
+    let expected = format!(
+        "Target is a symlink or not a directory: {}",
+        escape_path(&target)
+    );
+    assert_validation_message(error, &expected);
+    assert_file_content(&target, "not a directory\n");
+}
+
 /// Create a temporary directory for one test.
 fn temp_root() -> TempDir {
     let created = tempdir();
