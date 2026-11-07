@@ -115,7 +115,7 @@ fn execute_unpack_request(request: UnpackRequest) -> Result<(), Error> {
 }
 
 /// Print the full help text of the `unpack` command to stdout.
-fn print_unpack_help() -> Result<(), Error> {
+pub(crate) fn print_unpack_help() -> Result<(), Error> {
     let metadata = UnpackCommand::new(PathBuf::new(), PathBuf::new());
     return parser::print_line(metadata.help());
 }

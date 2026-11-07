@@ -2,6 +2,7 @@
 
 use std::process::ExitCode;
 
+use cli::tui::menu::MenuChoice;
 use vantools::common::cli::{collect_arguments, to_exit_code};
 use vantools::common::{Error, VanError};
 use vantools::van;
@@ -36,6 +37,9 @@ fn main() -> ExitCode {
 /// Parse the process arguments and route to the requested subcommand.
 fn run() -> Result<(), Error> {
     let arguments = collect_arguments()?;
+    if arguments.is_empty() {
+        return run_menu();
+    }
     let split = arguments.split_first();
     let (first, rest) = match split {
         Some(value) => value,
@@ -51,4 +55,19 @@ fn run() -> Result<(), Error> {
         return cli::verify::run_cli(rest);
     }
     return van::run_with_args(arguments);
+}
+
+/// Show the start menu and print the help of the chosen command.
+///
+/// The menu restores the terminal before it returns, so the help text
+/// is written to the normal screen.
+fn run_menu() -> Result<(), Error> {
+    let choice = cli::tui::menu::show_menu()?;
+    cli::tui::menu::clear_screen();
+    return match choice {
+        MenuChoice::Quit => Ok(()),
+        MenuChoice::Pack => cli::pack::print_pack_help(),
+        MenuChoice::Verify => cli::verify::print_verify_help(),
+        MenuChoice::Unpack => cli::unpack::print_unpack_help(),
+    };
 }

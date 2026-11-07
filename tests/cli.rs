@@ -80,11 +80,18 @@ fn version_rejects_trailing_argument() {
 }
 
 #[test]
-fn missing_subcommand_prints_help_and_exits_two() {
+fn no_arguments_starts_the_menu_and_requires_a_terminal() {
+    // An empty argument list opens the interactive start menu. The test
+    // harness has no terminal, so the menu reports a runtime error
+    // instead of the removed missing-subcommand usage.
     let output = run(&[]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(HELP_MARKER));
+    assert!(
+        stderr.contains("requires an interactive terminal"),
+        "unexpected error: {stderr}"
+    );
+    assert!(!stderr.contains(HELP_MARKER));
 }
 
 #[test]

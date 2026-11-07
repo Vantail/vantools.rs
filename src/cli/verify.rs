@@ -98,7 +98,7 @@ fn execute_verify_request(request: VerifyRequest) -> Result<(), Error> {
 }
 
 /// Print the full help text of the `verify` command to stdout.
-fn print_verify_help() -> Result<(), Error> {
+pub(crate) fn print_verify_help() -> Result<(), Error> {
     let metadata = VerifyCommand::new(PathBuf::new());
     return parser::print_line(metadata.help());
 }

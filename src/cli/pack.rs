@@ -115,7 +115,7 @@ fn execute_pack_request(request: PackRequest) -> Result<(), Error> {
 }
 
 /// Print the full help text of the `pack` command to stdout.
-fn print_pack_help() -> Result<(), Error> {
+pub(crate) fn print_pack_help() -> Result<(), Error> {
     let metadata = PackCommand::new(PathBuf::new(), PathBuf::new());
     return parser::print_line(metadata.help());
 }
