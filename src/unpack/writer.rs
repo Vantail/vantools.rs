@@ -11,6 +11,10 @@
 //! The destination is the `<name>-<version>` directory the command built
 //! inside the requested target, so the temporary directory is created
 //! next to it in that target.
+//!
+//! Every extracted file is synced to disk, and the finished temporary
+//! directory is flushed before the rename, so a reported success cannot
+//! leave truncated files behind after a crash.
 
 use std::fs::{self, File};
 use std::io;
@@ -46,7 +50,9 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 ///
 /// The manifest is written from the bytes that passed validation rather
 /// than re-serialized from the parsed struct, so the extracted file is
-/// byte-identical to the archived one.
+/// byte-identical to the archived one. Every file is synced before the
+/// directory is renamed, and the temporary directory itself is flushed
+/// first, matching the durability `pack` applies to its archive.
 ///
 /// # Errors
 ///
@@ -255,7 +261,8 @@ fn write_entries(
 /// without traversal, drive letters, or backslashes, and joining it onto
 /// the temporary directory keeps the write inside that directory. The
 /// content is copied in fixed-size chunks, so a large entry is never
-/// held in memory as a whole.
+/// held in memory as a whole. The finished file is synced before the
+/// function returns, so a crash cannot leave it truncated after success.
 ///
 /// # Errors
 ///
@@ -274,7 +281,7 @@ fn write_entry(
     loop {
         let read = entry.read(&mut buffer);
         let count = match read {
-            Ok(0) => return Ok(()),
+            Ok(0) => break,
             Ok(value) => value,
             Err(error) => {
                 return Err(Error::Runtime(format!(
@@ -304,17 +311,38 @@ fn write_entry(
             }
         }
     }
+    return sync_file(&file, &path);
 }
 
-/// Write `content` to `path`, creating missing parent directories.
+/// Write `content` to `path`, creating missing parent directories, and
+/// flush the file to disk before returning.
 fn write_file(path: &Path, content: &[u8]) -> Result<(), Error> {
     create_parent_directory(path)?;
     let mut file = create_file(path)?;
     let written = file.write_all(content);
-    return match written {
+    match written {
+        Ok(()) => {}
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to write {}: {error}",
+                escape_path(path)
+            )));
+        }
+    }
+    return sync_file(&file, path);
+}
+
+/// Flush a written file's contents to disk.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the file cannot be synced.
+fn sync_file(file: &File, path: &Path) -> Result<(), Error> {
+    let synced = file.sync_all();
+    return match synced {
         Ok(()) => Ok(()),
         Err(error) => Err(Error::Runtime(format!(
-            "failed to write {}: {error}",
+            "failed to sync {}: {error}",
             escape_path(path)
         ))),
     };
@@ -355,19 +383,74 @@ fn create_file(path: &Path) -> Result<File, Error> {
     };
 }
 
-/// Rename the finished temporary directory onto the destination path.
+/// Flush the temporary directory to disk before the rename.
 ///
-/// On failure the temporary directory is removed, so a failed run never
-/// leaves temporary debris behind.
+/// The directory is opened and synced, so the names created inside it
+/// survive an unclean shutdown. `std` cannot open a directory on
+/// non-Unix platforms, so those platforms rely on the per-file syncs.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Runtime`] when the rename fails.
+/// Returns [`Error::Runtime`] when the directory cannot be opened or
+/// synced.
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), Error> {
+    let opened = File::open(path);
+    let directory = match opened {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to open {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    let synced = directory.sync_all();
+    return match synced {
+        Ok(()) => Ok(()),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to sync {}: {error}",
+            escape_path(path)
+        ))),
+    };
+}
+
+/// Flush the temporary directory to disk before the rename.
+///
+/// `std` cannot open a directory on this platform, so the file contents
+/// were already synced and the directory is left to the file system.
+///
+/// # Errors
+///
+/// This implementation cannot fail.
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), Error> {
+    return Ok(());
+}
+
+/// Rename the finished temporary directory onto the destination path.
+///
+/// The directory is synced before the rename, and on failure the
+/// temporary directory is removed, so a failed run never leaves
+/// temporary debris behind.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the directory cannot be synced or the
+/// rename fails.
 fn install_directory(
     temp_path: &Path,
     destination_path: &Path,
     written: usize,
 ) -> Result<usize, Error> {
+    let synced = sync_directory(temp_path);
+    match synced {
+        Ok(()) => {}
+        Err(error) => {
+            discard_temp_directory(temp_path);
+            return Err(error);
+        }
+    }
     let renamed = fs::rename(temp_path, destination_path);
     return match renamed {
         Ok(()) => Ok(written),
