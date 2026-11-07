@@ -19,7 +19,7 @@ const BAR_WIDTH: usize = 20;
 const STEP: usize = 5;
 
 /// Time each frame stays on screen.
-const FRAME_DELAY: Duration = Duration::from_millis(30);
+const FRAME_DELAY: Duration = Duration::from_millis(3);
 
 /// Block drawn for a filled cell.
 const FILLED_BLOCK: char = '█';
@@ -50,10 +50,11 @@ pub fn show_progress() {
     if !stdout.is_terminal() {
         return;
     }
+    let mut handle = stdout.lock();
     let mut percent: usize = 0;
     loop {
         let frame = format!("\r{}", render_frame(percent));
-        if !emit_frame(&frame) {
+        if !emit_frame(&mut handle, &frame) {
             return;
         }
         if percent >= 100 {
@@ -63,14 +64,20 @@ pub fn show_progress() {
         percent += STEP;
     }
     let blank = format!("\r{}\r\n", " ".repeat(LINE_WIDTH));
-    emit_frame(&blank);
+    emit_frame(&mut handle, &blank);
     return;
 }
 
 /// Write one frame and report whether the stream accepted it.
-fn emit_frame(frame: &str) -> bool {
-    print!("{frame}");
-    let flushed = io::stdout().flush();
+///
+/// A closed or broken stdout makes the write fail; the caller then stops
+/// the animation instead of panicking through `print!`.
+fn emit_frame(handle: &mut impl Write, frame: &str) -> bool {
+    let written = handle.write_all(frame.as_bytes());
+    if written.is_err() {
+        return false;
+    }
+    let flushed = handle.flush();
     return flushed.is_ok();
 }
 

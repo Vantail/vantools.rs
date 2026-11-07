@@ -3,7 +3,8 @@
 //! The module owns every check the command runs on an archive: the
 //! archive path itself must be a regular file, every entry name must
 //! pass the shared archive rules and be unique, every entry must be a
-//! regular file, every entry is read through so its data and CRC-32 are
+//! regular file or an explicit directory entry (`dist/`), every entry is
+//! read through so its data and CRC-32 are
 //! validated within the decompressed-size budgets, the archived
 //! `manifest.json` is validated with the rules the `pack` command
 //! applies, and the `dist/` directory and its entrypoint must exist.
@@ -38,6 +39,9 @@ const SYMLINK_FILE_TYPE: u32 = 0o120000;
 
 /// File-type bits of a regular file in a Unix mode.
 const REGULAR_FILE_TYPE: u32 = 0o100000;
+
+/// File-type bits of a directory in a Unix mode.
+const DIRECTORY_FILE_TYPE: u32 = 0o040000;
 
 /// Size of the buffer used to read one archive entry.
 const COPY_BUFFER_BYTES: usize = 8 * 1024;
@@ -358,7 +362,8 @@ fn duplicate_entry(source: &Path) -> Error {
     ));
 }
 
-/// Return an error unless the entry mode marks a regular file.
+/// Return an error unless the entry mode marks a regular file or an
+/// explicit directory entry.
 ///
 /// The mode comes from the ZIP external attributes and is absent for
 /// archives written on platforms without Unix modes, so a missing mode
@@ -367,10 +372,15 @@ fn duplicate_entry(source: &Path) -> Error {
 /// rule requires. Only the file-type bits are inspected, so the
 /// permission bits of a regular entry are left alone.
 ///
+/// A directory mode is accepted only for a name that ends with `/`, which
+/// is how a standard ZIP archive writes a directory entry. A directory
+/// mode on a file name stays rejected, because such an entry would
+/// shadow a real file below `dist/`.
+///
 /// A symbolic link keeps its own diagnostic because it is the most
-/// common non-regular entry. Every other type, such as a directory or a
-/// device, is rejected as well, so an entry the archive format does not
-/// permit cannot pass by satisfying a name check.
+/// common non-regular entry. Every other type, such as a device, is
+/// rejected as well, so an entry the archive format does not permit
+/// cannot pass by satisfying a name check.
 ///
 /// # Errors
 ///
@@ -391,6 +401,9 @@ fn reject_non_regular(name: &str, mode: Option<u32>) -> Result<(), Error> {
     if file_type == 0 || file_type == REGULAR_FILE_TYPE {
         return Ok(());
     }
+    if file_type == DIRECTORY_FILE_TYPE && name.ends_with('/') {
+        return Ok(());
+    }
     return Err(Error::ValidationError(format!(
         "Non-regular files are not allowed in the archive: {}",
         escape_text(name)
@@ -398,6 +411,9 @@ fn reject_non_regular(name: &str, mode: Option<u32>) -> Result<(), Error> {
 }
 
 /// Return an error unless some entry lives below `dist/`.
+///
+/// An explicit directory entry (`dist/`) proves the directory exists just
+/// as a file entry (`dist/app.ts`) does.
 fn require_dist(names: &[String], source: &Path) -> Result<(), Error> {
     let prefix = format!("{DIST_DIRECTORY_NAME}/");
     for name in names {

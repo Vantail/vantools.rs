@@ -36,6 +36,11 @@ const ELLIPSIS: &str = "...";
 
 /// Validates a raw relative archive entry path.
 ///
+/// A single trailing slash is accepted, because a standard ZIP archive
+/// lists a directory as an entry whose name ends with `/`. Only that
+/// marker is ignored: the rest of the path must still be a relative,
+/// NFC path without an empty segment.
+///
 /// Rejects backslashes, absolute paths, drive letters, empty path
 /// segments, `.` and `..` traversal segments, and paths that are not
 /// normalized to Unicode NFC.
@@ -51,25 +56,39 @@ pub fn validate_archive_entry(path_str: &str) -> Result<(), Error> {
             escape_text(path_str)
         )));
     }
-    if is_absolute_or_has_empty_segment(path_str) {
+    let entry_path = strip_directory_marker(path_str);
+    if is_absolute_or_has_empty_segment(entry_path) {
         return Err(Error::ValidationError(format!(
             "Absolute paths or drive letters are not allowed: {}",
             escape_text(path_str)
         )));
     }
-    if has_traversal_segment(path_str) {
+    if has_traversal_segment(entry_path) {
         return Err(Error::ValidationError(format!(
             "Path traversal segments are not allowed: {}",
             escape_text(path_str)
         )));
     }
-    if !is_nfc(path_str) {
+    if !is_nfc(entry_path) {
         return Err(Error::ValidationError(format!(
             "Path is not in Unicode NFC format: {}",
             escape_text(path_str)
         )));
     }
     return Ok(());
+}
+
+/// Returns the entry path without the trailing slash that marks a ZIP
+/// directory entry.
+///
+/// At most one slash is removed, so a name such as `dist//` keeps a
+/// trailing empty segment and is still rejected as empty.
+fn strip_directory_marker(path_str: &str) -> &str {
+    let stripped = path_str.strip_suffix('/');
+    return match stripped {
+        Some(value) => value,
+        None => path_str,
+    };
 }
 
 /// Validates that `path` is a regular file or a directory.

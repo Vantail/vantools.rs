@@ -75,6 +75,23 @@ fn verify_accepts_a_minimal_archive() {
 }
 
 #[test]
+fn verify_accepts_an_explicit_dist_directory_entry() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_directory_entry_archive(&archive);
+    let report = verify_report(&archive);
+    assert_eq!(report.manifest.entrypoint, "app.ts");
+    let mut names = report.entry_names;
+    names.sort();
+    let expected: Vec<String> = vec![
+        String::from("dist/"),
+        String::from("dist/app.ts"),
+        String::from("manifest.json"),
+    ];
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn verify_rejects_path_traversal() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -751,6 +768,29 @@ fn write_symlink_archive(path: &Path, name: &str, target: &str) {
         Ok(()) => {}
         Err(error) => panic!("failed to add the symlink {name}: {error}"),
     }
+    finish_archive(writer, path);
+}
+
+/// Write an archive that lists `dist/` as an explicit directory entry.
+///
+/// A standard ZIP writer emits that entry in front of the files it
+/// holds, so the archive has to be accepted like one without it.
+fn write_directory_entry_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let regular = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .system(System::Unix);
+    let added = writer.add_directory("dist", regular);
+    match added {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to add the dist directory entry: {error}");
+        }
+    }
+    start_file(&mut writer, "manifest.json", regular);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    start_file(&mut writer, "dist/app.ts", regular);
+    write_content(&mut writer, "// content\n");
     finish_archive(writer, path);
 }
 
