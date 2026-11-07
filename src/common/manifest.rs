@@ -23,7 +23,9 @@ pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 /// name. Capping it during validation makes the rejection an early,
 /// explicit error instead of a late "file name too long" failure after
 /// the `dist` collection work is done. 64 matches the echo cap that
-/// `van` already applies to untrusted values.
+/// `van` already applies to untrusted values. A character count does
+/// not bound bytes, so the composed file name is also measured in
+/// bytes against [`MAX_ARCHIVE_NAME_BYTES`].
 const MAX_NAME_CHARS: usize = 64;
 
 /// Largest manifest version accepted, in Unicode scalar values.
@@ -31,7 +33,27 @@ const MAX_NAME_CHARS: usize = 64;
 /// The version becomes the second part of the archive file name and a
 /// SemVer version may carry unbounded build metadata, so like
 /// [`MAX_NAME_CHARS`] it bounds the final file name during validation.
+/// The composed file name is bounded in bytes separately, by
+/// [`MAX_ARCHIVE_NAME_BYTES`].
 const MAX_VERSION_CHARS: usize = 64;
+
+/// Largest archive file name accepted, in bytes.
+///
+/// `<name>-<version>.van` becomes a single file name component, and
+/// common file systems limit one component to 255 bytes. The
+/// per-field caps count characters, not bytes, and one character can
+/// need four bytes, so name and version can both pass their own caps
+/// and still compose a file name the file system refuses. Measuring
+/// the composed name in bytes during validation keeps the rejection
+/// an early, explicit [`Error::ValidationError`] instead of a late
+/// runtime failure after the `dist` collection work is done.
+const MAX_ARCHIVE_NAME_BYTES: usize = 255;
+
+/// Bytes the archive file name adds around the two manifest fields.
+///
+/// `<name>-<version>.van` adds a hyphen and the `.van` extension on
+/// top of the name and the version.
+const ARCHIVE_NAME_OVERHEAD: usize = "-.van".len();
 
 /// The parsed and validated `manifest.json` from a plugin directory.
 #[derive(Deserialize)]
@@ -179,6 +201,7 @@ fn parse_manifest(content: &str) -> Result<Manifest, Error> {
 fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
     validate_name(&manifest.name)?;
     validate_version_length(&manifest.version)?;
+    validate_archive_name_length(&manifest.name, &manifest.version)?;
     let version = semver::Version::parse(&manifest.version);
     match version {
         Ok(_) => {}
@@ -205,8 +228,9 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
 /// `<name>-<version>.van`, so it must be a single path component: free
 /// of path separators, not absolute, without a drive letter, and
 /// neither a `.` nor a `..` segment. It must also fit in
-/// [`MAX_NAME_CHARS`] Unicode scalar values so the composed file name
-/// stays usable.
+/// [`MAX_NAME_CHARS`] Unicode scalar values, and together with the
+/// version it must compose a file name within
+/// [`MAX_ARCHIVE_NAME_BYTES`] bytes, so the composed name stays usable.
 ///
 /// # Errors
 ///
@@ -246,9 +270,11 @@ fn invalid_name(name: &str) -> Error {
 ///
 /// The version is the second part of `<name>-<version>.van` and a
 /// SemVer version may carry unbounded build metadata, so like the name
-/// it is capped during validation. The version is not rendered in the
-/// diagnostic, because an oversized value would flood the terminal,
-/// which matches the echo-cap policy elsewhere in the crate.
+/// it is capped during validation. The composed file name is bounded
+/// in bytes by [`validate_archive_name_length`]. The version is not
+/// rendered in the diagnostic, because an oversized value would flood
+/// the terminal, which matches the echo-cap policy elsewhere in the
+/// crate.
 ///
 /// # Errors
 ///
@@ -258,6 +284,35 @@ fn validate_version_length(version: &str) -> Result<(), Error> {
     if character_count(version) > MAX_VERSION_CHARS {
         return Err(Error::ValidationError(format!(
             "Manifest version must not exceed {MAX_VERSION_CHARS} characters"
+        )));
+    }
+    return Ok(());
+}
+
+/// Validate that the composed archive file name fits a file system
+/// name component.
+///
+/// The per-field caps count characters, and one character can need up
+/// to four bytes, so a name and a version that both pass
+/// [`validate_name`] and [`validate_version_length`] can still compose
+/// a `<name>-<version>.van` file name above `NAME_MAX`. Checking the
+/// composed length here keeps that rejection an early validation
+/// error naming the manifest condition, rather than a late file
+/// system failure of a different error class.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the composed name exceeds
+/// [`MAX_ARCHIVE_NAME_BYTES`] bytes. The oversized fields are not
+/// echoed, matching the echo policy of the other length checks.
+fn validate_archive_name_length(
+    name: &str,
+    version: &str,
+) -> Result<(), Error> {
+    let composed = name.len() + version.len() + ARCHIVE_NAME_OVERHEAD;
+    if composed > MAX_ARCHIVE_NAME_BYTES {
+        return Err(Error::ValidationError(format!(
+            "Manifest name and version must not exceed {MAX_ARCHIVE_NAME_BYTES} bytes in total"
         )));
     }
     return Ok(());

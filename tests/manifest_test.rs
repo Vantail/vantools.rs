@@ -93,6 +93,32 @@ fn oversized_version_is_rejected() {
 }
 
 #[test]
+fn multi_byte_name_above_the_archive_name_limit_is_rejected() {
+    // 64 astral characters are 256 bytes, so the name passes the
+    // character cap while <name>-<version>.van exceeds NAME_MAX.
+    let name = "🎉".repeat(64);
+    let message = name_message(&name);
+    assert_eq!(
+        message,
+        "Manifest name and version must not exceed 255 bytes in total"
+    );
+}
+
+#[test]
+fn multi_byte_name_at_the_archive_name_limit_is_accepted() {
+    // 244 multi-byte name bytes plus one ASCII byte, five version
+    // bytes, and the five bytes of punctuation fill 255 exactly.
+    let name = format!("{}a", "🎉".repeat(61));
+    let content = format!(
+        "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    let root = temp_root();
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let manifest = expect_manifest(root.path());
+    assert_eq!(manifest.name, name);
+}
+
+#[test]
 fn invalid_entrypoint_is_rejected() {
     let root = temp_root();
     let content = "{\"name\":\"example-plugin\",\"version\":\"1.2.3\",\
