@@ -50,11 +50,12 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 ///
 /// # Errors
 ///
-/// Returns [`Error::ValidationError`] when the destination already
-/// exists, and [`Error::Runtime`] when an entry cannot be read or the
-/// files cannot be written. Every failure removes the temporary
-/// directory, so a failed run leaves neither a destination directory nor
-/// temporary debris.
+/// Returns [`Error::ValidationError`] when the destination or the
+/// temporary path already exists, and [`Error::Runtime`] when an entry
+/// cannot be read or the files cannot be written. Every failure after
+/// the temporary directory was created removes it, so a failed run
+/// leaves neither a destination directory nor temporary debris; an
+/// entry that already occupied the temporary path is left untouched.
 pub(super) fn extract_archive(
     archive: &mut ZipArchive<File>,
     archive_path: &Path,
@@ -64,12 +65,12 @@ pub(super) fn extract_archive(
     refuse_existing_target(destination_path)?;
     let temp_path = temp_directory_path(destination_path)?;
     let prepared = prepare_temp_directory(&temp_path);
-    let extracted = match prepared {
-        Ok(()) => {
-            extract_into(archive, &temp_path, archive_path, manifest_bytes)
-        }
-        Err(error) => Err(error),
-    };
+    match prepared {
+        Ok(()) => {}
+        Err(error) => return Err(error),
+    }
+    let extracted =
+        extract_into(archive, &temp_path, archive_path, manifest_bytes);
     return match extracted {
         Ok(written) => install_directory(&temp_path, destination_path, written),
         Err(error) => {
@@ -114,7 +115,9 @@ fn refuse_existing_target(destination_path: &Path) -> Result<(), Error> {
 /// The temporary directory lives in the requested target, beside the
 /// `<name>-<version>` destination, so the final rename stays on one
 /// volume and installs the directory in one step. The process id keeps
-/// the name unique per running unpack process.
+/// the name unique per running unpack process; because the name is
+/// predictable, [`prepare_temp_directory`] creates it with create-new
+/// semantics and refuses any entry that already exists there.
 ///
 /// # Errors
 ///
@@ -135,48 +138,40 @@ fn temp_directory_path(destination_path: &Path) -> Result<PathBuf, Error> {
     return Ok(destination_path.with_file_name(temp_name));
 }
 
-/// Remove a leftover temporary entry and create the temporary
-/// directory.
+/// Create the temporary directory with create-new semantics.
 ///
-/// A `.tmp-` sibling left by an aborted run is removed first, so a retry
-/// never mixes freshly extracted files with stale ones from the earlier
-/// attempt. Missing parent directories are created, matching the way
-/// `pack` creates a target directory.
+/// The path is not cleared first: an entry that already exists there,
+/// including a symbolic link, fails the run so a pre-placed entry is
+/// never removed or reused. The created entry is inspected without
+/// following links and must be a real directory before anything is
+/// written into it.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Runtime`] when the leftover cannot be removed or the
-/// directory cannot be created.
+/// Returns [`Error::ValidationError`] when an entry already exists at
+/// the path, and [`Error::Runtime`] when the directory cannot be
+/// created or inspected.
 fn prepare_temp_directory(path: &Path) -> Result<(), Error> {
-    clear_leftover(path)?;
-    let created = fs::create_dir_all(path);
-    return match created {
-        Ok(()) => Ok(()),
-        Err(error) => Err(Error::Runtime(format!(
-            "failed to create {}: {error}",
-            escape_path(path)
-        ))),
-    };
-}
-
-/// Remove an entry at `path` when one exists, whatever its type.
-///
-/// The entry is inspected without following links, so a leftover
-/// symlink is removed as a link instead of having its own directory
-/// emptied.
-///
-/// # Errors
-///
-/// Returns [`Error::Runtime`] when the path cannot be inspected or the
-/// entry cannot be removed.
-fn clear_leftover(path: &Path) -> Result<(), Error> {
+    let created = fs::create_dir(path);
+    match created {
+        Ok(()) => {}
+        Err(error) => {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                return Err(Error::ValidationError(format!(
+                    "Temporary directory already exists: {}",
+                    escape_path(path)
+                )));
+            }
+            return Err(Error::Runtime(format!(
+                "failed to create temporary directory {}: {error}",
+                escape_path(path)
+            )));
+        }
+    }
     let metadata = fs::symlink_metadata(path);
     let metadata = match metadata {
         Ok(value) => value,
         Err(error) => {
-            if error.kind() == io::ErrorKind::NotFound {
-                return Ok(());
-            }
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",
                 escape_path(path)
@@ -184,17 +179,13 @@ fn clear_leftover(path: &Path) -> Result<(), Error> {
         }
     };
     let file_type = metadata.file_type();
-    let removed = match file_type.is_dir() && !file_type.is_symlink() {
-        true => fs::remove_dir_all(path),
-        false => fs::remove_file(path),
-    };
-    return match removed {
-        Ok(()) => Ok(()),
-        Err(error) => Err(Error::Runtime(format!(
-            "failed to remove {}: {error}",
-            escape_path(path)
-        ))),
-    };
+    if file_type.is_dir() && !file_type.is_symlink() {
+        return Ok(());
+    }
+    return Err(Error::Runtime(format!(
+        "temporary directory is not a real directory: {}",
+        escape_path(path)
+    )));
 }
 
 /// Write the inspected archive's contents into `temp_path`.
@@ -345,10 +336,17 @@ fn create_parent_directory(path: &Path) -> Result<(), Error> {
     };
 }
 
-/// Create the file at `path` for writing.
+/// Create a file for writing without reusing an existing entry.
+///
+/// `create_new` fails when the path already exists, so a file or symlink
+/// placed at the path is refused instead of being truncated or followed.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the file cannot be created.
 fn create_file(path: &Path) -> Result<File, Error> {
-    let created = File::create(path);
-    return match created {
+    let opened = fs::OpenOptions::new().write(true).create_new(true).open(path);
+    return match opened {
         Ok(value) => Ok(value),
         Err(error) => Err(Error::Runtime(format!(
             "failed to create {}: {error}",
@@ -444,7 +442,15 @@ mod tests {
             Ok(()) => {}
             Err(error) => panic!("failed to replace the archive: {error}"),
         }
-        let destination = root.path().join("out").join("sample-plugin-0.1.0");
+        let target = root.path().join("out");
+        let created = fs::create_dir(&target);
+        match created {
+            Ok(()) => {}
+            Err(error) => {
+                panic!("failed to create {}: {error}", target.display());
+            }
+        }
+        let destination = target.join("sample-plugin-0.1.0");
         let extracted = extract_archive(
             &mut handle,
             &archive_path,
