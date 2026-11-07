@@ -87,6 +87,7 @@ In this example, the entry file inside the archive is `dist/src/app.ts`.
 Archive entry names MUST:
 
 - be valid UTF-8 in Unicode NFC,
+- be at most 255 bytes long,
 - use `/` as the path separator (no backslashes),
 - be relative (no leading `/`, no drive letters),
 - not contain empty, `.`, or `..` segments,

@@ -73,6 +73,17 @@ const MAX_TOTAL_BYTES: u64 = 256 * MEBIBYTE;
 /// allocate. The limit stays far above any plausible plugin payload.
 const MAX_ENTRY_COUNT: usize = 4096;
 
+/// Largest archive entry name accepted, in bytes.
+///
+/// The inspection keeps every name in the collected list and in the
+/// duplicate sets, and case-folding can expand it, so the count cap
+/// alone would let 4096 maximum-length ZIP names (up to 65,535 bytes
+/// each) allocate hundreds of megabytes before any data budget applies.
+/// 255 bytes matches the budget the manifest applies to a single file
+/// name component and bounds the bookkeeping together with
+/// [`MAX_ENTRY_COUNT`].
+const MAX_ENTRY_NAME_BYTES: usize = 255;
+
 /// Name of the manifest file expected at the archive root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 
@@ -234,6 +245,12 @@ fn collect_entry_names(
                 )));
             }
         };
+        if name.len() > MAX_ENTRY_NAME_BYTES {
+            return Err(Error::ValidationError(format!(
+                "Archive entry name is longer than {MAX_ENTRY_NAME_BYTES} bytes: {}",
+                escape_text(&name)
+            )));
+        }
         if !seen.insert(name.clone()) {
             return Err(duplicate_entry(source));
         }
