@@ -143,7 +143,7 @@ fn unpack_rejects_an_existing_plugin_directory() {
 }
 
 #[test]
-fn unpack_clears_a_leftover_temporary_directory() {
+fn unpack_refuses_an_existing_temporary_directory() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
     write_archive(
@@ -157,12 +157,46 @@ fn unpack_clears_a_leftover_temporary_directory() {
     create_dir(&leftover);
     let stale = leftover.join("stale.txt");
     write_file(&stale, "stale leftover\n");
-    let report = unpack_report(&archive, &target);
-    assert_eq!(report.target, destination);
-    assert_eq!(report.files_written, 2);
-    assert!(!leftover.exists(), "the temporary directory was not removed");
-    assert!(destination.join("dist").join("app.ts").is_file());
-    assert_no_temp_entries(&target);
+    let error = unpack_error(&archive, &target);
+    let expected = format!(
+        "Temporary directory already exists: {}",
+        escape_path(&leftover)
+    );
+    assert_validation_message(error, &expected);
+    assert_file_content(&stale, "stale leftover\n");
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unpack_refuses_a_symlinked_temporary_directory() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_archive(
+        &archive,
+        &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")],
+    );
+    let target = root.path().join("out");
+    create_dir(&target);
+    let destination = target.join(SAMPLE_FOLDER);
+    let leftover = temporary_path(&destination);
+    let elsewhere = root.path().join("elsewhere");
+    create_dir(&elsewhere);
+    let linked = std::os::unix::fs::symlink(&elsewhere, &leftover);
+    match linked {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to create {}: {error}", leftover.display());
+        }
+    }
+    let error = unpack_error(&archive, &target);
+    let expected = format!(
+        "Temporary directory already exists: {}",
+        escape_path(&leftover)
+    );
+    assert_validation_message(error, &expected);
+    assert!(!elsewhere.join("manifest.json").exists());
+    assert!(!destination.exists());
 }
 
 #[cfg(unix)]
@@ -225,7 +259,7 @@ fn temp_root() -> TempDir {
 /// Derive the temporary directory a run uses for `destination`.
 ///
 /// The writer keeps the process id in the name, so a test can place a
-/// leftover entry at exactly that path.
+/// pre-existing entry at exactly that path.
 fn temporary_path(destination: &Path) -> PathBuf {
     let name = match destination.file_name() {
         Some(value) => value.to_owned(),
