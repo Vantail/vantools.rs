@@ -90,7 +90,7 @@ Archive entry names MUST:
 - use `/` as the path separator (no backslashes),
 - be relative (no leading `/`, no drive letters),
 - not contain empty, `.`, or `..` segments,
-- be unique within the archive,
+- be unique within the archive, ignoring case (two names that differ only by case would collide when extracted on a case-insensitive file system),
 - not represent symbolic links or other non-regular files.
 
 Readers MUST reject archives that violate these rules. These rules prevent path traversal ("zip slip") and ensure the archive can be extracted safely.

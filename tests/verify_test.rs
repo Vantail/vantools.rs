@@ -191,6 +191,60 @@ fn verify_rejects_duplicate_names_differing_in_encoding() {
 }
 
 #[test]
+fn verify_rejects_entry_names_differing_only_by_case() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/App.ts", "// shadowing content\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_unicode_entry_names_differing_only_by_case() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/caf\u{e9}.ts", "// content\n"),
+        ("dist/CAF\u{c9}.ts", "// shadowing content\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_case_variant_of_the_manifest_entry() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("Manifest.json", SAMPLE_MANIFEST),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Duplicate archive entry names are not allowed: {}",
+        archive.display()
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
 fn verify_accepts_regular_entries_with_permissions() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
