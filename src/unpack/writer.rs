@@ -2,11 +2,15 @@
 //!
 //! Every file is written into a temporary sibling directory and the
 //! finished directory is moved to its final path with one rename, so a
-//! failed run never leaves a half-extracted directory at the target.
-//! The archive has already passed the shared inspection, so entry names
-//! are safe relative paths and every entry is a regular file; the
-//! writer still refuses an existing target so a run can never overwrite
-//! files the user already had.
+//! failed run never leaves a half-extracted directory at the
+//! destination. The archive has already passed the shared inspection, so
+//! entry names are safe relative paths and every entry is a regular
+//! file; the writer still refuses an existing destination so a run can
+//! never overwrite files the user already had.
+//!
+//! The destination is the `<name>-<version>` directory the command built
+//! inside the requested target, so the temporary directory is created
+//! next to it in that target.
 
 use std::fs::{self, File};
 use std::io;
@@ -26,12 +30,14 @@ const COPY_BUFFER_BYTES: usize = 8 * 1024;
 /// Name of the manifest file expected at the archive root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 
-/// Extract every entry of `archive_path` below `target_path` and return
-/// the number of files written.
+/// Extract every entry of `archive_path` into `destination_path` and
+/// return the number of files written.
 ///
-/// The layout reproduces the source layout `pack` archives, so the
-/// manifest lands at `<target>/manifest.json` and the payload keeps its
-/// `dist/` prefix, for example `<target>/dist/app.ts`.
+/// The destination is the `<name>-<version>` directory inside the
+/// requested target. The layout reproduces the source layout `pack`
+/// archives, so the manifest lands at `<destination>/manifest.json` and
+/// the payload keeps its `dist/` prefix, for example
+/// `<destination>/dist/app.ts`.
 ///
 /// The manifest is written from the bytes that passed validation rather
 /// than re-serialized from the parsed struct, so the extracted file is
@@ -39,24 +45,25 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 ///
 /// # Errors
 ///
-/// Returns [`Error::ValidationError`] when the target already exists,
-/// and [`Error::Runtime`] when the archive cannot be read or the files
-/// cannot be written. Every failure removes the temporary directory, so
-/// a failed run leaves neither a target directory nor temporary debris.
+/// Returns [`Error::ValidationError`] when the destination already
+/// exists, and [`Error::Runtime`] when the archive cannot be read or the
+/// files cannot be written. Every failure removes the temporary
+/// directory, so a failed run leaves neither a destination directory nor
+/// temporary debris.
 pub(super) fn extract_archive(
     archive_path: &Path,
-    target_path: &Path,
+    destination_path: &Path,
     manifest_bytes: &[u8],
 ) -> Result<usize, Error> {
-    refuse_existing_target(target_path)?;
-    let temp_path = temp_directory_path(target_path)?;
+    refuse_existing_target(destination_path)?;
+    let temp_path = temp_directory_path(destination_path)?;
     let prepared = prepare_temp_directory(&temp_path);
     let extracted = match prepared {
         Ok(()) => extract_into(&temp_path, archive_path, manifest_bytes),
         Err(error) => Err(error),
     };
     return match extracted {
-        Ok(written) => install_directory(&temp_path, target_path, written),
+        Ok(written) => install_directory(&temp_path, destination_path, written),
         Err(error) => {
             discard_temp_directory(&temp_path);
             return Err(error);
@@ -64,23 +71,23 @@ pub(super) fn extract_archive(
     };
 }
 
-/// Return an error when anything already occupies the target path.
+/// Return an error when anything already occupies the destination path.
 ///
 /// The path is inspected with [`fs::symlink_metadata`], so a dangling
 /// symbolic link is seen as an entry instead of being treated as
-/// missing. The target never exists during a normal run, so every
+/// missing. The destination never exists during a normal run, so every
 /// existing entry is refused rather than replaced.
 ///
 /// # Errors
 ///
 /// Returns [`Error::ValidationError`] when the path exists, and
 /// [`Error::Runtime`] when it cannot be inspected.
-fn refuse_existing_target(target_path: &Path) -> Result<(), Error> {
-    let metadata = fs::symlink_metadata(target_path);
+fn refuse_existing_target(destination_path: &Path) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(destination_path);
     return match metadata {
         Ok(_) => Err(Error::ValidationError(format!(
             "Target directory already exists: {}",
-            escape_path(target_path)
+            escape_path(destination_path)
         ))),
         Err(error) => {
             if error.kind() == io::ErrorKind::NotFound {
@@ -88,34 +95,36 @@ fn refuse_existing_target(target_path: &Path) -> Result<(), Error> {
             }
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",
-                escape_path(target_path)
+                escape_path(destination_path)
             )));
         }
     };
 }
 
-/// Derive the sibling temporary directory for the target.
+/// Derive the temporary directory that sits next to the destination.
 ///
-/// The temporary directory lives next to the target so the final rename
-/// stays on one volume and installs the directory in one step. The
-/// process id keeps the name unique per running unpack process.
+/// The temporary directory lives in the requested target, beside the
+/// `<name>-<version>` destination, so the final rename stays on one
+/// volume and installs the directory in one step. The process id keeps
+/// the name unique per running unpack process.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Runtime`] when the target path has no file name.
-fn temp_directory_path(target_path: &Path) -> Result<PathBuf, Error> {
-    let name = match target_path.file_name() {
+/// Returns [`Error::Runtime`] when the destination path has no file
+/// name.
+fn temp_directory_path(destination_path: &Path) -> Result<PathBuf, Error> {
+    let name = match destination_path.file_name() {
         Some(value) => value,
         None => {
             return Err(Error::Runtime(format!(
                 "failed to derive a temporary directory path for {}",
-                escape_path(target_path)
+                escape_path(destination_path)
             )));
         }
     };
     let mut temp_name = name.to_owned();
     temp_name.push(format!(".tmp-{}", std::process::id()));
-    return Ok(target_path.with_file_name(temp_name));
+    return Ok(destination_path.with_file_name(temp_name));
 }
 
 /// Remove a leftover temporary entry and create the temporary
@@ -359,7 +368,7 @@ fn create_file(path: &Path) -> Result<File, Error> {
     };
 }
 
-/// Rename the finished temporary directory onto the target path.
+/// Rename the finished temporary directory onto the destination path.
 ///
 /// On failure the temporary directory is removed, so a failed run never
 /// leaves temporary debris behind.
@@ -369,10 +378,10 @@ fn create_file(path: &Path) -> Result<File, Error> {
 /// Returns [`Error::Runtime`] when the rename fails.
 fn install_directory(
     temp_path: &Path,
-    target_path: &Path,
+    destination_path: &Path,
     written: usize,
 ) -> Result<usize, Error> {
-    let renamed = fs::rename(temp_path, target_path);
+    let renamed = fs::rename(temp_path, destination_path);
     return match renamed {
         Ok(()) => Ok(written),
         Err(error) => {
@@ -380,7 +389,7 @@ fn install_directory(
             return Err(Error::Runtime(format!(
                 "failed to move {} to {}: {error}",
                 escape_path(temp_path),
-                escape_path(target_path)
+                escape_path(destination_path)
             )));
         }
     };

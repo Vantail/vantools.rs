@@ -26,6 +26,7 @@ const SOURCE_LONG_FLAG: &str = "--source";
 
 /// Long form of the target flag of the `unpack` subcommand.
 const TARGET_LONG_FLAG: &str = "--target";
+
 /// An `unpack` invocation resolved into an action to execute.
 ///
 /// The argument scan stops at the first `--help` or `--version` flag
@@ -148,7 +149,8 @@ fn run_unpack_command(
 ///
 /// The check lines keep the wording of the `verify` report, because
 /// both commands run the same inspection, and the extraction lines name
-/// the archive that was read and the directory that was installed. Every
+/// the archive that was read and the `<name>-<version>` directory that
+/// was installed, so the user sees exactly where the plugin landed. Every
 /// interpolated path is escaped like any other diagnostic.
 fn print_report(report: &UnpackReport) {
     log_ok("Check passed", "Paths and ZIP structure");

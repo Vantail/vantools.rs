@@ -16,6 +16,10 @@ use zip::write::SimpleFileOptions;
 /// Name of the archives built by the helpers in this file.
 const SAMPLE_ARCHIVE: &str = "sample.van";
 
+/// Directory the sample archive extracts into, derived from its name and
+/// version.
+const SAMPLE_FOLDER: &str = "sample-plugin-0.1.0";
+
 /// Manifest used by the archives that are expected to be valid.
 const SAMPLE_MANIFEST: &str = "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\"entrypoint\":\"app.ts\"}";
 
@@ -63,7 +67,7 @@ fn unpack_rejects_path_traversal_without_touching_the_target() {
 }
 
 #[test]
-fn unpack_extracts_the_source_layout() {
+fn unpack_extracts_into_a_name_version_directory() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
     write_archive(
@@ -75,17 +79,20 @@ fn unpack_extracts_the_source_layout() {
     );
     let target = root.path().join("out");
     let report = unpack_report(&archive, &target);
+    let destination = target.join(SAMPLE_FOLDER);
     assert_eq!(report.archive, archive);
-    assert_eq!(report.target, target);
+    assert_eq!(report.target, destination);
     assert_eq!(report.manifest.entrypoint, "app.ts");
     assert_eq!(report.files_written, 2);
+    // The base target is created when it is missing.
     assert!(target.is_dir());
-    assert_file_content(&target.join("manifest.json"), SAMPLE_MANIFEST);
+    assert!(destination.is_dir());
+    assert_file_content(&destination.join("manifest.json"), SAMPLE_MANIFEST);
     assert_file_content(
-        &target.join("dist").join("app.ts"),
+        &destination.join("dist").join("app.ts"),
         "// entrypoint content\n",
     );
-    assert_no_temp_entries(root.path());
+    assert_no_temp_entries(&target);
 }
 
 #[test]
@@ -102,16 +109,18 @@ fn unpack_extracts_nested_dist_directories() {
     );
     let target = root.path().join("out");
     let report = unpack_report(&archive, &target);
+    let destination = target.join(SAMPLE_FOLDER);
+    assert_eq!(report.target, destination);
     assert_eq!(report.files_written, 3);
     assert_file_content(
-        &target.join("dist").join("src").join("util.ts"),
+        &destination.join("dist").join("src").join("util.ts"),
         "// helper\n",
     );
-    assert_no_temp_entries(root.path());
+    assert_no_temp_entries(&target);
 }
 
 #[test]
-fn unpack_rejects_an_existing_target_directory() {
+fn unpack_rejects_an_existing_plugin_directory() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
     write_archive(
@@ -119,15 +128,18 @@ fn unpack_rejects_an_existing_target_directory() {
         &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")],
     );
     let target = root.path().join("out");
-    create_dir(&target);
-    let sentinel = target.join("keep.txt");
+    let destination = target.join(SAMPLE_FOLDER);
+    create_dir(&destination);
+    let sentinel = destination.join("keep.txt");
     write_file(&sentinel, "user data\n");
     let error = unpack_error(&archive, &target);
-    let expected =
-        format!("Target directory already exists: {}", escape_path(&target));
+    let expected = format!(
+        "Target directory already exists: {}",
+        escape_path(&destination)
+    );
     assert_validation_message(error, &expected);
     assert_file_content(&sentinel, "user data\n");
-    assert_no_temp_entries(root.path());
+    assert_no_temp_entries(&target);
 }
 
 #[test]
@@ -139,15 +151,18 @@ fn unpack_clears_a_leftover_temporary_directory() {
         &[("manifest.json", SAMPLE_MANIFEST), ("dist/app.ts", "// content\n")],
     );
     let target = root.path().join("out");
-    let leftover = temporary_path(&target);
+    create_dir(&target);
+    let destination = target.join(SAMPLE_FOLDER);
+    let leftover = temporary_path(&destination);
     create_dir(&leftover);
     let stale = leftover.join("stale.txt");
     write_file(&stale, "stale leftover\n");
     let report = unpack_report(&archive, &target);
+    assert_eq!(report.target, destination);
     assert_eq!(report.files_written, 2);
     assert!(!leftover.exists(), "the temporary directory was not removed");
-    assert!(target.join("dist").join("app.ts").is_file());
-    assert_no_temp_entries(root.path());
+    assert!(destination.join("dist").join("app.ts").is_file());
+    assert_no_temp_entries(&target);
 }
 
 /// Create a temporary directory for one test.
@@ -159,18 +174,20 @@ fn temp_root() -> TempDir {
     };
 }
 
-/// Derive the temporary directory a run uses for `target`.
+/// Derive the temporary directory a run uses for `destination`.
 ///
 /// The writer keeps the process id in the name, so a test can place a
 /// leftover entry at exactly that path.
-fn temporary_path(target: &Path) -> PathBuf {
-    let name = match target.file_name() {
+fn temporary_path(destination: &Path) -> PathBuf {
+    let name = match destination.file_name() {
         Some(value) => value.to_owned(),
-        None => panic!("target has no file name: {}", target.display()),
+        None => {
+            panic!("destination has no file name: {}", destination.display())
+        }
     };
     let mut temp_name = name;
     temp_name.push(format!(".tmp-{}", std::process::id()));
-    return target.with_file_name(temp_name);
+    return destination.with_file_name(temp_name);
 }
 
 /// Write an archive holding `entries` in the given order.

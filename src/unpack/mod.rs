@@ -1,34 +1,38 @@
 //! Implementation of the `unpack` command.
 //!
 //! A run validates the archive with the same inspection the `verify`
-//! command runs, then extracts the payload into a temporary sibling
-//! directory and renames that directory onto the target. Validation runs
-//! first and writes nothing, so an invalid archive fails before the
-//! target directory is touched, and an existing target is refused
-//! instead of overwritten.
+//! command runs, then extracts the payload into a temporary directory and
+//! renames that directory onto `<target>/<name>-<version>`. Every plugin
+//! therefore lands in its own directory, so several plugins can share one
+//! parent folder. Validation runs first and writes nothing, so an invalid
+//! archive fails before the target is touched, and an existing
+//! `<name>-<version>` directory is refused instead of overwritten.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::common::Error;
 use crate::common::archive;
 use crate::common::cli::CliCommand;
 use crate::common::manifest::Manifest;
+use crate::common::validation::escape_path;
 
 mod writer;
 
 /// The `unpack` command.
 ///
-/// Validates an existing `.van` archive and extracts it into a target
-/// directory that must not exist yet. The extracted layout matches the
-/// source layout `pack` archives: `<target>/manifest.json` and the
-/// payload below `<target>/dist/`. The files are written into a
-/// temporary sibling directory and moved into place with one rename, so
-/// the target appears complete or not at all.
+/// Validates an existing `.van` archive and extracts it into
+/// `<target>/<name>-<version>`, creating the target directory when it is
+/// missing. The extracted layout matches the source layout `pack`
+/// archives: `<target>/<name>-<version>/manifest.json` and the payload
+/// below `<target>/<name>-<version>/dist/`. The files are written into a
+/// temporary directory inside the target and moved into place with one
+/// rename, so the plugin directory appears complete or not at all.
 #[non_exhaustive]
 pub struct UnpackCommand {
     /// The `.van` archive to extract; must be a regular file.
     pub source: PathBuf,
-    /// The directory that receives the extracted files.
+    /// The directory that receives the `<name>-<version>` directory.
     pub target: PathBuf,
 }
 
@@ -37,7 +41,8 @@ pub struct UnpackCommand {
 pub struct UnpackReport {
     /// Path of the archive that was extracted.
     pub archive: PathBuf,
-    /// Path of the directory the files were written to.
+    /// Path of the `<name>-<version>` directory the files were written
+    /// to.
     pub target: PathBuf,
     /// The parsed and validated manifest.
     pub manifest: Manifest,
@@ -57,28 +62,50 @@ impl UnpackCommand {
     /// Run the command and return what it produced.
     ///
     /// The archive is validated before anything is written, so an
-    /// invalid archive leaves the file system untouched. A target that
-    /// already exists is refused, and a failed extraction removes its
-    /// temporary directory.
+    /// invalid archive leaves the file system untouched. The target
+    /// directory is created when it is missing, an existing
+    /// `<name>-<version>` directory is refused, and a failed extraction
+    /// removes its temporary directory.
     ///
     /// # Errors
     ///
     /// Returns the first validation or runtime error the shared
-    /// inspection produces, and the errors of the extraction.
+    /// inspection produces, and the errors of the target creation and
+    /// the extraction.
     pub fn run(&self) -> Result<UnpackReport, Error> {
         let contents = archive::inspect(&self.source)?;
+        let destination = self.destination_path(&contents.manifest);
+        ensure_directory(&self.target)?;
         let files_written = writer::extract_archive(
             &self.source,
-            &self.target,
+            &destination,
             &contents.manifest_bytes,
         )?;
         return Ok(UnpackReport {
             archive: self.source.clone(),
-            target: self.target.clone(),
+            target: destination,
             manifest: contents.manifest,
             files_written,
         });
     }
+
+    /// Build the `<target>/<name>-<version>` directory of the plugin.
+    fn destination_path(&self, manifest: &Manifest) -> PathBuf {
+        let folder_name = format!("{}-{}", manifest.name, manifest.version);
+        return self.target.join(folder_name);
+    }
+}
+
+/// Create `path` together with any missing parent directory.
+fn ensure_directory(path: &Path) -> Result<(), Error> {
+    let created = fs::create_dir_all(path);
+    return match created {
+        Ok(()) => Ok(()),
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to create target directory {}: {error}",
+            escape_path(path)
+        ))),
+    };
 }
 
 impl CliCommand for UnpackCommand {
