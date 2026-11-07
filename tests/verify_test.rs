@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
 use vantools::common::validation::{
-    MAX_ECHO_CHARS, escape_manifest, escape_path,
+    MAX_ECHO_CHARS, escape_manifest, escape_path, escape_text,
 };
 use vantools::pack::PackCommand;
 use vantools::verify::{VerifyCommand, VerifyReport};
@@ -351,6 +351,25 @@ fn verify_rejects_entry_above_the_decompressed_budget() {
         message,
         "Archive entry is larger than the 64 MiB limit: dist/app.ts"
     );
+}
+
+#[test]
+fn verify_rejects_an_entry_name_above_the_length_budget() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let long_name = format!("dist/{}", "a".repeat(251));
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        (long_name.as_str(), "// long name\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Archive entry name is longer than 255 bytes: {}",
+        escape_text(&long_name)
+    );
+    assert_validation_message(error, &expected);
 }
 
 #[test]
