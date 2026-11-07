@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   test:
@@ -35,13 +34,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   create-issue:
     name: Create or update failure issue
     needs: test
     if: failure()
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - name: Create or update issue
         uses: actions/github-script@v9

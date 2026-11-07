@@ -330,13 +330,16 @@ fn escape_line(text: &str) -> String {
     return rendered;
 }
 
-/// Returns true when the path is absolute, has a drive letter, or has
-/// an empty segment.
+/// Returns true when the path is absolute, starts with a Windows drive
+/// letter, or has an empty segment.
+///
+/// A colon is only rejected as part of a drive letter, so a Unix file
+/// name that contains one, such as `dist/a:b.js`, is accepted.
 fn is_absolute_or_has_empty_segment(path_str: &str) -> bool {
     if path_str.starts_with('/') {
         return true;
     }
-    if path_str.contains(':') {
+    if has_drive_letter_prefix(path_str) {
         return true;
     }
     for segment in path_str.split('/') {
@@ -345,6 +348,27 @@ fn is_absolute_or_has_empty_segment(path_str: &str) -> bool {
         }
     }
     return false;
+}
+
+/// Returns true when the path starts with a drive letter such as `C:`.
+///
+/// The colon counts as a drive letter only at index 1, after an ASCII
+/// alphabetic character. A colon anywhere else in the path is a legal
+/// Unix file name character and is left alone.
+fn has_drive_letter_prefix(path_str: &str) -> bool {
+    let bytes = path_str.as_bytes();
+    let letter = match bytes.first() {
+        Some(value) => *value,
+        None => return false,
+    };
+    if !letter.is_ascii_alphabetic() {
+        return false;
+    }
+    let colon = match bytes.get(1) {
+        Some(value) => *value,
+        None => return false,
+    };
+    return colon == b':';
 }
 
 /// Returns true when the path has a `.` or `..` segment.

@@ -522,6 +522,17 @@ fn validate_archive_entry_rejects_non_nfc_paths() {
 }
 
 #[test]
+fn validate_archive_entry_accepts_colons_in_file_names() {
+    let colon = validate_archive_entry("dist/a:b.js");
+    match colon {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("valid path with a colon was rejected: {error}");
+        }
+    }
+}
+
+#[test]
 fn validate_archive_entry_accepts_valid_paths() {
     let ascii = validate_archive_entry("dist/src/app.ts");
     match ascii {

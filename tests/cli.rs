@@ -13,6 +13,15 @@ const UNKNOWN_MESSAGE: &str = "error: unknown subcommand 'foo'";
 const MISSING_ARGS_MESSAGE: &str =
     "error: Missing required arguments. Run 'van pack --help' for usage.";
 
+/// Count the lines of `text` with an explicit loop.
+fn line_count(text: &str) -> usize {
+    let mut count = 0;
+    for _ in text.lines() {
+        count += 1;
+    }
+    return count;
+}
+
 /// Create a temporary directory for one test.
 fn temp_root() -> tempfile::TempDir {
     let created = tempfile::tempdir();
@@ -90,7 +99,7 @@ fn unknown_subcommand_escapes_control_characters() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains('\u{1b}'));
-    assert_eq!(stderr.lines().count(), 1);
+    assert_eq!(line_count(&stderr), 1);
     assert!(stderr.contains("\\u{1b}"));
     assert!(stderr.contains("\\n"));
 }
@@ -157,7 +166,7 @@ fn pack_unknown_argument_escapes_control_characters() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains('\u{1b}'));
-    assert_eq!(stderr.lines().count(), 1);
+    assert_eq!(line_count(&stderr), 1);
     assert!(stderr.contains("\\u{1b}"));
     assert!(stderr.contains("\\n"));
 }
