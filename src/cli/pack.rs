@@ -1,17 +1,19 @@
 //! Argument parsing and dispatch for the `pack` command.
 
-use std::io;
 use std::path::{Path, PathBuf};
 
 use vantools::common::Error;
-use vantools::common::cli::{CliCommand, version_line};
-use vantools::common::validation::{escape_path, escape_text};
+use vantools::common::cli::CliCommand;
+use vantools::common::validation::escape_path;
 use vantools::pack::{PackCommand, PackReport};
 
-use super::output::write_line;
+use super::parser;
 use super::tui::log::{log_info, log_ok, log_warn};
 use super::tui::logo::print_logo;
 use super::tui::progress::show_progress;
+
+/// Name of the subcommand, used in its usage errors.
+const COMMAND_NAME: &str = "pack";
 
 /// Source flag of the `pack` subcommand.
 const SOURCE_FLAG: &str = "-s";
@@ -24,18 +26,6 @@ const SOURCE_LONG_FLAG: &str = "--source";
 
 /// Long form of the target flag of the `pack` subcommand.
 const TARGET_LONG_FLAG: &str = "--target";
-
-/// Short flag that requests help for the `pack` subcommand.
-const HELP_FLAG: &str = "-h";
-
-/// Long flag that requests help for the `pack` subcommand.
-const HELP_LONG_FLAG: &str = "--help";
-
-/// Short flag that requests the version of the `pack` subcommand.
-const VERSION_FLAG: &str = "-v";
-
-/// Long flag that requests the version of the `pack` subcommand.
-const VERSION_LONG_FLAG: &str = "--version";
 
 /// A `pack` invocation resolved into an action to execute.
 ///
@@ -86,23 +76,25 @@ fn parse_pack_request(arguments: &[String]) -> Result<PackRequest, Error> {
             None => break,
             Some(value) => value.as_str(),
         };
-        if argument == HELP_FLAG || argument == HELP_LONG_FLAG {
+        if parser::is_help_flag(argument) {
             return Ok(PackRequest::Help);
         }
-        if argument == VERSION_FLAG || argument == VERSION_LONG_FLAG {
+        if parser::is_version_flag(argument) {
             return Ok(PackRequest::Version);
         }
         let is_source = argument == SOURCE_FLAG || argument == SOURCE_LONG_FLAG;
         if is_source {
-            source = Some(parse_flag_value(&mut remaining)?);
+            let value = parser::parse_flag_value(&mut remaining, COMMAND_NAME)?;
+            source = Some(value);
             continue;
         }
         let is_target = argument == TARGET_FLAG || argument == TARGET_LONG_FLAG;
         if is_target {
-            target = Some(parse_flag_value(&mut remaining)?);
+            let value = parser::parse_flag_value(&mut remaining, COMMAND_NAME)?;
+            target = Some(value);
             continue;
         }
-        return Err(unknown_argument(argument));
+        return Err(parser::unknown_argument(COMMAND_NAME, argument));
     }
     return Ok(PackRequest::Run {
         source,
@@ -110,28 +102,11 @@ fn parse_pack_request(arguments: &[String]) -> Result<PackRequest, Error> {
     });
 }
 
-/// Consume the value that follows a `-s`/`-t` flag.
-///
-/// # Errors
-///
-/// Returns [`Error::CliError`] when the flag is the last argument and
-/// no value follows it.
-fn parse_flag_value<'a, I>(remaining: &mut I) -> Result<PathBuf, Error>
-where
-    I: Iterator<Item = &'a String>,
-{
-    let value = match remaining.next() {
-        Some(value) => value,
-        None => return Err(missing_arguments()),
-    };
-    return Ok(PathBuf::from(value));
-}
-
 /// Execute a parsed `pack` request.
 fn execute_pack_request(request: PackRequest) -> Result<(), Error> {
     return match request {
         PackRequest::Help => print_pack_help(),
-        PackRequest::Version => print_version(),
+        PackRequest::Version => parser::print_version(),
         PackRequest::Run {
             source,
             target,
@@ -142,7 +117,7 @@ fn execute_pack_request(request: PackRequest) -> Result<(), Error> {
 /// Print the full help text of the `pack` command to stdout.
 fn print_pack_help() -> Result<(), Error> {
     let metadata = PackCommand::new(PathBuf::new(), PathBuf::new());
-    return print_line(metadata.help());
+    return parser::print_line(metadata.help());
 }
 
 /// Resolve the required flags and run the `pack` command.
@@ -157,11 +132,11 @@ fn run_pack_command(
 ) -> Result<(), Error> {
     let resolved_source = match source {
         Some(value) => value,
-        None => return Err(missing_arguments()),
+        None => return Err(parser::missing_arguments(COMMAND_NAME)),
     };
     let resolved_target = match target {
         Some(value) => value,
-        None => return Err(missing_arguments()),
+        None => return Err(parser::missing_arguments(COMMAND_NAME)),
     };
     let command = PackCommand::new(resolved_source, resolved_target.clone());
     print_logo();
@@ -195,32 +170,4 @@ fn print_report(report: &PackReport, target: &Path) {
         log_info("Ignored path", &escape_path(relative));
     }
     return;
-}
-
-/// Build the error for an argument the `pack` command does not accept.
-fn unknown_argument(argument: &str) -> Error {
-    let rendered = escape_text(argument);
-    return Error::CliError(format!(
-        "Unknown argument: {rendered}. Run 'van pack --help' for usage."
-    ));
-}
-
-/// Build the error for a `pack` invocation without source and target.
-fn missing_arguments() -> Error {
-    return Error::CliError(String::from(
-        "Missing required arguments. Run 'van pack --help' for usage.",
-    ));
-}
-
-/// Print one line to stdout.
-fn print_line(text: &str) -> Result<(), Error> {
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    return write_line(&mut handle, text, "output");
-}
-
-/// Print the version banner (`van <crate-version>`) to stdout.
-fn print_version() -> Result<(), Error> {
-    let line: String = version_line();
-    return print_line(&line);
 }

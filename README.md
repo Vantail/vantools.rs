@@ -229,18 +229,23 @@ by `rustfmt.toml`.
 | `src/main.rs`              | Binary entry point; routes subcommands and maps errors to exit codes |
 | `src/lib.rs`               | Library root exposing the modules                                    |
 | `src/van.rs`               | Top-level argument parsing and help/version output                   |
+| `src/cli/mod.rs`           | Terminal interaction modules used by the binary                      |
+| `src/cli/parser.rs`        | Shared flag scanning, usage errors, and stdout output                |
+| `src/cli/pack.rs`          | `pack` argument parsing and dispatch                                 |
+| `src/cli/verify.rs`        | `verify` argument parsing and dispatch                               |
+| `src/cli/output.rs`        | Line writing that reports stream failures                            |
+| `src/cli/verify_report.rs` | Rendered output of a completed verification                          |
+| `src/cli/tui/`             | Logo, tagged log lines, progress bar, and tree rendering             |
 | `src/pack/mod.rs`          | `pack` command and its source validation                             |
-| `src/pack/cli.rs`          | `pack` argument parsing and dispatch                                 |
 | `src/pack/writer.rs`       | ZIP writing and atomic archive replacement                           |
-| `src/verify/mod.rs`        | `verify` command, archive checks, and report                         |
-| `src/verify/cli.rs`        | `verify` argument parsing and dispatch                               |
+| `src/verify/mod.rs`        | `verify` command and its report                                      |
+| `src/verify/validation.rs` | Archive inspection, entry checks, and manifest validation            |
+| `src/common/mod.rs`        | Shared module root and the `Subcommand` trait                        |
 | `src/common/cli.rs`        | Argument collection, error reporting, exit codes, `CliCommand`       |
 | `src/common/manifest.rs`   | Manifest parsing and validation                                      |
 | `src/common/validation.rs` | Path validation and safe diagnostic rendering                        |
 | `src/common/walk.rs`       | Iterative directory traversal                                        |
-| `src/common/output.rs`     | Terminal output helpers                                              |
 | `src/common/error.rs`      | Unified error type                                                   |
-| `src/common/command.rs`    | `Command` trait                                                      |
 | `tests/cli.rs`             | Integration tests for the compiled binary                            |
 | `tests/pack_test.rs`       | Tests for packing and path validation                                |
 | `tests/manifest_test.rs`   | Tests for manifest validation                                        |
