@@ -460,7 +460,7 @@ mod tests {
             &destination.join("dist").join("app.ts"),
             "// validated\n",
         );
-        assert!(!root.path().join("escaped.ts").exists());
+        assert!(!destination.join("escaped.ts").exists());
     }
 
     /// Write an archive holding `entries` in the given order.
