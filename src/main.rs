@@ -11,6 +11,9 @@ mod cli;
 /// Name of the subcommand routed to the `pack` module.
 const PACK_SUBCOMMAND: &str = "pack";
 
+/// Name of the subcommand routed to the `unpack` module.
+const UNPACK_SUBCOMMAND: &str = "unpack";
+
 /// Name of the subcommand routed to the `verify` module.
 const VERIFY_SUBCOMMAND: &str = "verify";
 
@@ -40,6 +43,9 @@ fn run() -> Result<(), Error> {
     };
     if first == PACK_SUBCOMMAND {
         return cli::pack::run_cli(rest);
+    }
+    if first == UNPACK_SUBCOMMAND {
+        return cli::unpack::run_cli(rest);
     }
     if first == VERIFY_SUBCOMMAND {
         return cli::verify::run_cli(rest);
