@@ -62,10 +62,12 @@ impl UnpackCommand {
     /// Run the command and return what it produced.
     ///
     /// The archive is validated before anything is written, so an
-    /// invalid archive leaves the file system untouched. The target
-    /// directory is created when it is missing, an existing
-    /// `<name>-<version>` directory is refused, and a failed extraction
-    /// removes its temporary directory.
+    /// invalid archive leaves the file system untouched. The inspection
+    /// and the extraction read one open handle, so a path replaced after
+    /// validation cannot change what is extracted. The target directory
+    /// is created when it is missing, an existing `<name>-<version>`
+    /// directory is refused, and a failed extraction removes its
+    /// temporary directory.
     ///
     /// # Errors
     ///
@@ -73,10 +75,12 @@ impl UnpackCommand {
     /// inspection produces, and the errors of the target creation and
     /// the extraction.
     pub fn run(&self) -> Result<UnpackReport, Error> {
-        let contents = archive::inspect(&self.source)?;
+        let mut opened = archive::open(&self.source)?;
+        let contents = archive::inspect_archive(&mut opened, &self.source)?;
         let destination = self.destination_path(&contents.manifest);
         ensure_directory(&self.target)?;
         let files_written = writer::extract_archive(
+            &mut opened,
             &self.source,
             &destination,
             &contents.manifest_bytes,
