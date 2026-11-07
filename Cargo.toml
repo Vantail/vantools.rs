@@ -36,3 +36,6 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[target."cfg(windows)".dependencies]
+same-file = "1.0.6"
