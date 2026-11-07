@@ -1,25 +1,27 @@
 //! Implementation of the `unpack` command.
 //!
-//! The module is scaffolded only: extraction is not implemented yet.
-//! [`UnpackCommand::run`] performs no I/O and returns an
-//! [`UnpackReport`] naming the archive it would read and the directory
-//! it would fill, so the command, its report, and its CLI wrapper exist
-//! before the extraction logic arrives.
+//! A run validates the archive with the same inspection the `verify`
+//! command runs, then returns an [`UnpackReport`] with the validated
+//! manifest. Extraction itself is not implemented yet: validation runs
+//! first and writes nothing, so an invalid archive fails before the
+//! target directory would be touched.
 
 use std::path::PathBuf;
 
 use crate::common::Error;
+use crate::common::archive;
 use crate::common::cli::CliCommand;
+use crate::common::manifest::Manifest;
 
 /// The `unpack` command.
 ///
-/// Extracts an existing `.van` archive into a target directory.
-/// Extraction is not implemented yet, so a run reads nothing, writes
-/// nothing, and returns a [`UnpackReport`] with the requested archive
-/// and target paths.
+/// Validates an existing `.van` archive before extracting it into a
+/// target directory. Only the validation phase is implemented, so a run
+/// reads and validates the archive, writes nothing, and returns an
+/// [`UnpackReport`] with the validated manifest.
 #[non_exhaustive]
 pub struct UnpackCommand {
-    /// The `.van` archive to extract.
+    /// The `.van` archive to extract; must be a regular file.
     pub source: PathBuf,
     /// The directory that receives the extracted files.
     pub target: PathBuf,
@@ -27,14 +29,17 @@ pub struct UnpackCommand {
 
 /// Everything an unpack run produced.
 ///
-/// While the command is a scaffold, the report only names the requested
-/// archive and target directory.
+/// Validation is the only phase implemented so far, so the report names
+/// the requested archive, the target directory, and the validated
+/// manifest.
 #[non_exhaustive]
 pub struct UnpackReport {
-    /// Path of the archive that was requested.
+    /// Path of the archive that was validated.
     pub archive: PathBuf,
     /// Path of the directory the files would be written to.
     pub target: PathBuf,
+    /// The parsed and validated manifest.
+    pub manifest: Manifest,
 }
 
 impl UnpackCommand {
@@ -48,18 +53,20 @@ impl UnpackCommand {
 
     /// Run the command and return what it produced.
     ///
-    /// Extraction is not implemented yet: the method performs no I/O
-    /// and returns the report straight away.
+    /// The archive is validated before anything is written, so an
+    /// invalid archive leaves the file system untouched: the target
+    /// directory is neither created nor filled.
     ///
     /// # Errors
     ///
-    /// Currently never fails. The fallible signature matches the other
-    /// commands so the extraction logic can be added without changing
-    /// the caller.
+    /// Returns the first validation or runtime error the shared
+    /// inspection produces.
     pub fn run(&self) -> Result<UnpackReport, Error> {
+        let contents = archive::inspect(&self.source)?;
         return Ok(UnpackReport {
             archive: self.source.clone(),
             target: self.target.clone(),
+            manifest: contents.manifest,
         });
     }
 }

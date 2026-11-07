@@ -2,16 +2,15 @@
 //!
 //! The command opens an existing `.van` archive and validates it
 //! without extracting anything. The checks themselves live in
-//! [`validation`]; this module holds the command and the report a
-//! successful check produced.
+//! [`crate::common::archive`], which the `unpack` command shares; this
+//! module holds the command and the report a successful check produced.
 
 use std::path::PathBuf;
 
 use crate::common::Error;
+use crate::common::archive;
 use crate::common::cli::CliCommand;
 use crate::common::manifest::Manifest;
-
-mod validation;
 
 /// The `verify` command.
 ///
@@ -64,7 +63,13 @@ impl VerifyCommand {
     ///
     /// Returns the first validation or runtime error the checks produce.
     pub fn run(&self) -> Result<VerifyReport, Error> {
-        return validation::inspect(&self.source);
+        let contents = archive::inspect(&self.source)?;
+        return Ok(VerifyReport {
+            source: self.source.clone(),
+            manifest: contents.manifest,
+            manifest_bytes: contents.manifest_bytes,
+            entry_names: contents.entry_names,
+        });
     }
 }
 

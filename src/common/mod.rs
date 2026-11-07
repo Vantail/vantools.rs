@@ -1,6 +1,7 @@
 //! Shared types for the `van` CLI: the subcommand blueprint and the
 //! unified error type.
 
+pub mod archive;
 pub mod cli;
 pub mod error;
 pub mod manifest;

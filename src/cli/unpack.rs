@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use vantools::common::Error;
 use vantools::common::cli::CliCommand;
-use vantools::common::validation::escape_path;
+use vantools::common::validation::{escape_path, escape_text};
 use vantools::unpack::{UnpackCommand, UnpackReport};
 
 use super::parser;
@@ -27,8 +27,8 @@ const SOURCE_LONG_FLAG: &str = "--source";
 /// Long form of the target flag of the `unpack` subcommand.
 const TARGET_LONG_FLAG: &str = "--target";
 
-/// Message the scaffold reports in place of an extraction result.
-const NOT_IMPLEMENTED_MESSAGE: &str = "Not implemented yet";
+/// Message the scaffold reports after a successful validation.
+const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented";
 
 /// An `unpack` invocation resolved into an action to execute.
 ///
@@ -148,13 +148,21 @@ fn run_unpack_command(
     return Ok(());
 }
 
-/// Print the report of a scaffolded unpack.
+/// Print the report of an unpack that validated its archive.
 ///
-/// Nothing is extracted yet, so the success line states that plainly
-/// and the requested paths follow as informational lines. Every
-/// interpolated path is escaped like any other diagnostic.
+/// The check lines keep the wording of the `verify` report, because
+/// both commands run the same inspection. Extraction is not implemented
+/// yet, so the last line says so instead of reporting files, and the
+/// requested paths follow as informational lines. Every interpolated
+/// path is escaped like any other diagnostic.
 fn print_report(report: &UnpackReport) {
-    log_ok("Unpacked", NOT_IMPLEMENTED_MESSAGE);
+    log_ok("Check passed", "Paths and ZIP structure");
+    log_ok("Check passed", "manifest.json is present and valid");
+    let entrypoint = escape_text(&report.manifest.entrypoint);
+    let entrypoint_check =
+        format!("dist/ and entrypoint ({entrypoint}) are present");
+    log_ok("Check passed", &entrypoint_check);
+    log_ok("Ready to extract", NOT_IMPLEMENTED_MESSAGE);
     log_info("Archive", &escape_path(&report.archive));
     log_info("Target directory", &escape_path(&report.target));
     return;

@@ -1,6 +1,6 @@
-//! Archive inspection and validation for the `verify` command.
+//! Shared archive inspection for the `verify` and `unpack` commands.
 //!
-//! The module owns every check the command runs on an archive: the
+//! The module owns every check both commands run on an archive: the
 //! archive path itself must be a regular file, every entry name must
 //! pass the shared archive rules and be unique ignoring case, every
 //! entry must be a regular file or an explicit directory entry
@@ -9,6 +9,10 @@
 //! validated within the decompressed-size budgets, the archived
 //! `manifest.json` is validated with the rules the `pack` command
 //! applies, and the `dist/` directory and its entrypoint must exist.
+//!
+//! Keeping one implementation means `unpack` accepts exactly the
+//! archives `verify` accepts, so no archive can pass one command and be
+//! rejected by the other.
 //!
 //! The archive path is checked before it is opened, because opening a
 //! FIFO blocks until a writer appears and a device can block or return
@@ -29,8 +33,6 @@ use crate::common::manifest::{MAX_MANIFEST_BYTES, Manifest};
 use crate::common::validation::{
     escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
 };
-
-use super::VerifyReport;
 
 /// Mask that selects the file-type bits of a Unix mode.
 const FILE_TYPE_MASK: u32 = 0o170000;
@@ -61,13 +63,13 @@ const MAX_ENTRY_BYTES: u64 = 64 * MEBIBYTE;
 /// Largest total decompressed size accepted for one archive, in bytes.
 ///
 /// Every entry of the archive is read, so the total bounds the work a
-/// single `verify` run can be made to do.
+/// single run can be made to do.
 const MAX_TOTAL_BYTES: u64 = 256 * MEBIBYTE;
 
 /// Largest number of entries accepted in one archive.
 ///
 /// Every entry name is validated and kept for the report, so the count
-/// bounds the memory a crafted central directory can make `verify`
+/// bounds the memory a crafted central directory can make a run
 /// allocate. The limit stays far above any plausible plugin payload.
 const MAX_ENTRY_COUNT: usize = 4096;
 
@@ -77,16 +79,30 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 /// Name of the directory that holds the plugin payload.
 const DIST_DIRECTORY_NAME: &str = "dist";
 
+/// Everything a successful archive inspection produced.
+///
+/// The commands built on this result decide on their own what to report
+/// and what to write; the inspection itself only validates and collects.
+#[non_exhaustive]
+pub struct ArchiveContents {
+    /// The parsed and validated manifest.
+    pub manifest: Manifest,
+    /// The exact manifest bytes that passed validation.
+    pub manifest_bytes: Vec<u8>,
+    /// Entry names as the archive listed them, in archive order.
+    pub entry_names: Vec<String>,
+}
+
 /// Open the archive at `source` and run every check on it.
 ///
-/// The checks run in the order the report prints them, and the first
-/// failure ends the run, so an invalid archive is never partly
-/// reported.
+/// The checks run in the order the `verify` report prints them, and the
+/// first failure ends the run, so an invalid archive is never partly
+/// reported and nothing downstream sees a half-validated result.
 ///
 /// # Errors
 ///
 /// Returns the first validation or runtime error the checks produce.
-pub(super) fn inspect(source: &Path) -> Result<VerifyReport, Error> {
+pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
     require_regular_source(source)?;
     let file = match File::open(source) {
         Ok(value) => value,
@@ -112,8 +128,7 @@ pub(super) fn inspect(source: &Path) -> Result<VerifyReport, Error> {
         read_manifest(&mut archive, manifest_index, source)?;
     require_dist(&names, source)?;
     require_entrypoint(&names, &manifest)?;
-    return Ok(VerifyReport {
-        source: source.to_path_buf(),
+    return Ok(ArchiveContents {
         manifest,
         manifest_bytes,
         entry_names: names,
@@ -126,7 +141,7 @@ pub(super) fn inspect(source: &Path) -> Result<VerifyReport, Error> {
 /// Reading each entry to the end makes the ZIP library check the local
 /// header, the compressed stream, and its CRC-32, so an archive with
 /// corrupt or truncated data is rejected here instead of failing later
-/// during installation.
+/// during extraction.
 ///
 /// The entry count is checked before any entry is read, so an archive
 /// holding an excessive number of entries is rejected without
