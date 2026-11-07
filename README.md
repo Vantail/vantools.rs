@@ -8,9 +8,10 @@ The crate is named `vantools` and builds a single binary named `van`.
 ## Status
 
 Early development. The `pack` command validates a plugin source
-directory and writes a `.van` archive, and the `verify` command checks an
-existing archive, its manifest, and its layout without extracting it.
-Archive extraction is not implemented yet.
+directory and writes a `.van` archive, `verify` checks an existing
+archive, its manifest, and its layout without extracting it, and
+`unpack` validates an archive and extracts it into
+`<target>/<name>-<version>`.
 
 ## Requirements
 
@@ -60,9 +61,10 @@ van 0.1.0
 
 Running `van` without arguments prints the help text to stderr and exits
 with code 2. Any first argument other than `--help`, `--version`, or the
-`pack` and `verify` subcommands is rejected as an unknown subcommand.
-The top-level help output lists the shared options; run `van pack --help`
-or `van verify --help` for the subcommand usage.
+`pack`, `unpack`, and `verify` subcommands is rejected as an unknown
+subcommand. The top-level help output lists the shared options; run
+`van pack --help`, `van unpack --help`, or `van verify --help` for the
+subcommand usage.
 
 ### Pack a plugin
 
@@ -111,7 +113,7 @@ $ van verify --help
 Usage: verify -s <source>
 
 Options:
-  -s, --source <path>  The .van archive to verify
+  -s, --source <path>  The .van archive to verify (a regular file)
   -h, --help           Print this help message
   -v, --version        Print version information
 ```
@@ -120,6 +122,8 @@ It validates every entry name with the same path rules `pack` applies,
 rejects symlink entries and `node_modules` at any depth, validates the
 archived `manifest.json` with the same rules as `pack`, and requires the
 `dist/` directory and the manifest entrypoint to exist in the archive.
+The archive path must be a regular file, so a symbolic link or other
+non-regular file is refused.
 
 For example, verifying the archive produced above:
 
@@ -129,24 +133,72 @@ van verify -s out/test-plugin-0.1.0.van
 
 ```text
 Verifying archive: test-plugin-0.1.0.van
-  [OK] Paths and ZIP structure are valid.
-  [OK] manifest.json is present and valid.
-  [OK] dist/ and entrypoint (app.ts) are present.
+Check passed: Paths and ZIP structure
+Check passed: manifest.json is present and valid
+Check passed: dist/ and entrypoint (app.ts) are present
+manifest.json
+{
+  "entrypoint": "app.ts",
+  "name": "test-plugin",
+  "version": "0.1.0"
+}
 
---- manifest.json ---
-{"name":"test-plugin","version":"0.1.0","entrypoint":"app.ts"}
----------------------
-
-Archive Contents:
-├── dist/
-│   └── app.ts
-└── manifest.json
+Archive Contents
+    .
+    ├── dist/
+    │   └── app.ts
+    └── manifest.json
 
 Archive is valid.
 ```
 
 An archive that fails a check is reported on stderr with exit code 1, and
 no report is printed.
+
+### Unpack an archive
+
+`van unpack` validates an existing `.van` archive and extracts it:
+
+```text
+$ van unpack --help
+Usage: unpack -s <source> -t <target>
+
+Options:
+  -s, --source <path>  The .van archive to extract
+  -t, --target <path>  The target directory to extract into
+  -h, --help           Print this help message
+  -v, --version        Print version information
+```
+
+The archive is validated with the same inspection `van verify` runs, so
+an invalid archive fails before anything is written. A valid archive is
+extracted into `<target>/<name>-<version>`, with the archived
+`manifest.json` at the top of that directory and the payload below its
+`dist/` prefix. The target directory is created when it is missing, and
+an existing `<name>-<version>` entry, including a symbolic link, is
+refused instead of overwritten. The archive path itself must be a regular
+file. Files are written into a temporary directory in the target and
+moved into place with one rename, so the plugin directory appears
+complete or not at all; a failed run removes its temporary directory.
+
+For example, extracting the archive produced above:
+
+```sh
+van unpack -s out/test-plugin-0.1.0.van -t out
+```
+
+```text
+Check passed: Paths and ZIP structure
+Check passed: manifest.json is present and valid
+Check passed: dist/ and entrypoint (app.ts) are present
+Extracting archive: out/test-plugin-0.1.0.van
+Successfully extracted archive: out/test-plugin-0.1.0
+Files written: 2
+```
+
+The run above creates `out/test-plugin-0.1.0/manifest.json` and
+`out/test-plugin-0.1.0/dist/app.ts`. Extracting the same archive into the
+same target again fails because the plugin directory already exists.
 
 ### Manifest and archive validation
 
@@ -168,9 +220,11 @@ It rejects:
 - archive entry names that are not relative, use backslashes, contain
   empty, `.`, or `..` segments, or are not in Unicode NFC.
 
-`verify` applies the same manifest and path rules to an existing archive,
-and additionally requires `dist/` and the manifest entrypoint to exist
-inside it.
+`verify` and `unpack` apply the same manifest and path rules to an
+existing archive, and additionally require `dist/` and the manifest
+entrypoint to exist inside it. `verify` only reports on the archive;
+`unpack` extracts it after the checks pass. Both commands require the
+archive path to be a regular file.
 
 Untrusted values echoed in diagnostics are rendered as a single line:
 control characters are escaped, and argument and manifest values are
@@ -186,7 +240,7 @@ See [docs/SPEC.md](docs/SPEC.md) for the complete format.
 | Code | Meaning                                                           |
 | ---- | ----------------------------------------------------------------- |
 | 0    | Success                                                           |
-| 1    | Runtime, validation, or `pack`/`verify` argument error            |
+| 1    | Runtime, validation, or `pack`/`unpack`/`verify` argument error   |
 | 2    | Top-level usage error (missing, unknown, or non-Unicode argument) |
 
 ## Dependencies
@@ -196,7 +250,9 @@ Runtime dependencies:
 - `semver` — SemVer version parsing.
 - `serde` (with `derive`) and `serde_json` — manifest parsing.
 - `unicode-normalization` — Unicode NFC validation.
-- `zip` (deflate only) — archive writing.
+- `zip` (deflate only) — archive reading and writing.
+- `same-file` (Windows only) — comparing file identities while
+  validating paths.
 
 The integration tests use `tempfile` to create temporary directories.
 
@@ -206,9 +262,12 @@ Run the same checks the CI workflow runs:
 
 ```sh
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+CI runs the tests on Linux, macOS, and Windows, runs the lint checks on
+Ubuntu, and runs a RustSec audit with `rustsec/audit-check`.
 
 `cargo test` runs the integration tests in `tests/`. In particular,
 `tests/cli.rs` exercises the compiled binary.
@@ -224,38 +283,42 @@ by `rustfmt.toml`.
 
 ## Project layout
 
-| Path                       | Contents                                                             |
-| -------------------------- | -------------------------------------------------------------------- |
-| `src/main.rs`              | Binary entry point; routes subcommands and maps errors to exit codes |
-| `src/lib.rs`               | Library root exposing the modules                                    |
-| `src/van.rs`               | Top-level argument parsing and help/version output                   |
-| `src/cli/mod.rs`           | Terminal interaction modules used by the binary                      |
-| `src/cli/parser.rs`        | Shared flag scanning, usage errors, and stdout output                |
-| `src/cli/pack.rs`          | `pack` argument parsing and dispatch                                 |
-| `src/cli/verify.rs`        | `verify` argument parsing and dispatch                               |
-| `src/cli/output.rs`        | Line writing that reports stream failures                            |
-| `src/cli/verify_report.rs` | Rendered output of a completed verification                          |
-| `src/cli/tui/`             | Logo, tagged log lines, progress bar, and tree rendering             |
-| `src/pack/mod.rs`          | `pack` command and its source validation                             |
-| `src/pack/writer.rs`       | ZIP writing and atomic archive replacement                           |
-| `src/verify/mod.rs`        | `verify` command and its report                                      |
-| `src/verify/validation.rs` | Archive inspection, entry checks, and manifest validation            |
-| `src/common/mod.rs`        | Shared module root and the `Subcommand` trait                        |
-| `src/common/cli.rs`        | Argument collection, error reporting, exit codes, `CliCommand`       |
-| `src/common/manifest.rs`   | Manifest parsing and validation                                      |
-| `src/common/validation.rs` | Path validation and safe diagnostic rendering                        |
-| `src/common/walk.rs`       | Iterative directory traversal                                        |
-| `src/common/error.rs`      | Unified error type                                                   |
-| `tests/cli.rs`             | Integration tests for the compiled binary                            |
-| `tests/pack_test.rs`       | Tests for packing and path validation                                |
-| `tests/manifest_test.rs`   | Tests for manifest validation                                        |
-| `tests/van_tests.rs`       | Tests for unknown-subcommand diagnostics                             |
-| `tests/main_tests.rs`      | Tests for error reporting and exit-code mapping                      |
-| `tests/verify_test.rs`     | Tests for archive verification and its report                        |
-| `examples/test-plugin/`    | Sample plugin source used by the tests                               |
-| `docs/SPEC.md`             | `.van` archive and manifest format                                   |
-| `docs/`                    | Rust, design, and Git guidelines                                     |
-| `.github/workflows/ci.yml` | Test and lint workflow                                               |
+| Path | Contents |
+| --- | --- |
+| `src/main.rs` | Binary entry point; routes subcommands and maps errors to exit codes |
+| `src/lib.rs` | Library root exposing the modules |
+| `src/van.rs` | Top-level argument parsing and help/version output |
+| `src/cli/mod.rs` | Terminal interaction modules used by the binary |
+| `src/cli/parser.rs` | Shared flag scanning, usage errors, and stdout output |
+| `src/cli/pack.rs` | `pack` argument parsing and dispatch |
+| `src/cli/unpack.rs` | `unpack` argument parsing and dispatch |
+| `src/cli/verify.rs` | `verify` argument parsing and dispatch |
+| `src/cli/output.rs` | Line writing that reports stream failures |
+| `src/cli/verify_report.rs` | Rendered output of a completed verification |
+| `src/cli/tui/` | Logo, tagged log lines, progress bar, and tree rendering |
+| `src/pack/mod.rs` | `pack` command and its source validation |
+| `src/pack/writer.rs` | ZIP writing and atomic archive replacement |
+| `src/unpack/mod.rs` | `unpack` command and its destination handling |
+| `src/unpack/writer.rs` | Archive extraction and atomic directory installation |
+| `src/verify/mod.rs` | `verify` command and its report |
+| `src/common/mod.rs` | Shared module root and the `Subcommand` trait |
+| `src/common/archive.rs` | Archive opening, validation, and manifest reading |
+| `src/common/cli.rs` | Argument collection, error reporting, exit codes, `CliCommand` |
+| `src/common/manifest.rs` | Manifest parsing and validation |
+| `src/common/validation.rs` | Path validation and safe diagnostic rendering |
+| `src/common/walk.rs` | Iterative directory traversal |
+| `src/common/error.rs` | Unified error type |
+| `tests/cli.rs` | Integration tests for the compiled binary |
+| `tests/pack_test.rs` | Tests for packing and path validation |
+| `tests/unpack_test.rs` | Tests for archive extraction |
+| `tests/manifest_test.rs` | Tests for manifest validation |
+| `tests/van_tests.rs` | Tests for unknown-subcommand diagnostics |
+| `tests/main_tests.rs` | Tests for error reporting and exit-code mapping |
+| `tests/verify_test.rs` | Tests for archive verification and its report |
+| `examples/test-plugin/` | Sample plugin source used by the tests |
+| `docs/SPEC.md` | `.van` archive and manifest format |
+| `docs/` | Rust, design, and Git guidelines |
+| `.github/workflows/ci.yml` | Test and lint workflow |
 
 ## Documentation
 
