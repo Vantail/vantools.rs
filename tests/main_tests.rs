@@ -1,29 +1,27 @@
-//! Integration tests for the CLI error-reporting helpers.
-
-use std::io;
-use std::io::Write;
+//! Integration tests for error rendering and exit-code mapping.
 
 use vantools::common::Error;
-use vantools::common::cli::{FALLBACK_EXIT_CODE, report_error, to_exit_code};
+use vantools::common::VanError;
+use vantools::common::cli::{FALLBACK_EXIT_CODE, to_exit_code};
 
-/// Writer that always fails, simulating an unavailable stderr.
-struct FailingWriter;
-
-impl Write for FailingWriter {
-    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
-        return Err(io::Error::other("stderr unavailable"));
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        return Err(io::Error::other("stderr unavailable"));
-    }
+#[test]
+fn every_error_variant_renders_with_the_error_prefix() {
+    let usage = Error::Usage(String::from("missing subcommand"));
+    assert_eq!(format!("{usage}"), "error: missing subcommand");
+    let runtime = Error::Runtime(String::from("disk full"));
+    assert_eq!(format!("{runtime}"), "error: disk full");
+    let validation = Error::ValidationError(String::from("bad entry"));
+    assert_eq!(format!("{validation}"), "error: bad entry");
+    let cli_error = Error::CliError(String::from("unknown argument"));
+    assert_eq!(format!("{cli_error}"), "error: unknown argument");
 }
 
 #[test]
-fn error_reporting_ignores_write_failures() {
-    let error = Error::Usage(String::from("missing subcommand"));
-    let mut writer = FailingWriter;
-    report_error(&mut writer, &error);
+fn usage_errors_exit_with_two_and_other_errors_with_one() {
+    assert_eq!(Error::Usage(String::from("value")).exit_code(), 2);
+    assert_eq!(Error::Runtime(String::from("value")).exit_code(), 1);
+    assert_eq!(Error::ValidationError(String::from("value")).exit_code(), 1);
+    assert_eq!(Error::CliError(String::from("value")).exit_code(), 1);
 }
 
 #[test]

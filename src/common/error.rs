@@ -36,29 +36,23 @@ impl VanError for Error {
     fn exit_code(&self) -> i32 {
         return match self {
             Error::Usage(_) => 2,
-            Error::Runtime(_) => 1,
-            Error::ValidationError(_) => 1,
-            Error::CliError(_) => 1,
+            Error::Runtime(_)
+            | Error::ValidationError(_)
+            | Error::CliError(_) => 1,
         };
     }
 }
 
 impl fmt::Display for Error {
+    /// Render the error with the `error: ` prefix shared by every variant.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Usage(message) => {
-                return write!(formatter, "error: {message}");
-            }
-            Error::Runtime(message) => {
-                return write!(formatter, "error: {message}");
-            }
-            Error::ValidationError(message) => {
-                return write!(formatter, "error: {message}");
-            }
-            Error::CliError(message) => {
-                return write!(formatter, "error: {message}");
-            }
-        }
+        let message = match self {
+            Error::Usage(message)
+            | Error::Runtime(message)
+            | Error::ValidationError(message)
+            | Error::CliError(message) => message,
+        };
+        return write!(formatter, "error: {message}");
     }
 }
 
