@@ -8,6 +8,7 @@ use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
 use vantools::common::manifest::Manifest;
+use vantools::common::validation::escape_path;
 use vantools::pack::PackCommand;
 
 /// A manifest that passes every validation rule.
@@ -284,7 +285,7 @@ fn symlinked_manifest_is_rejected() {
     };
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        manifest_path.display()
+        escape_path(&manifest_path)
     );
     assert_eq!(validation_message(error), expected);
 }

@@ -3,6 +3,8 @@
 use std::process::Command;
 use std::process::Output;
 
+use vantools::common::validation::escape_path;
+
 /// Marker contained in the shared help text.
 const HELP_MARKER: &str = "Usage: van";
 
@@ -237,8 +239,9 @@ fn pack_escapes_control_characters_in_created_target_path() {
     // The control characters of the created directory name must be
     // rendered as escapes, never emitted raw or as an extra line.
     assert!(!stdout.contains('\u{1b}'));
-    assert!(stdout.contains("created target directory: "));
-    assert!(stdout.contains("out\\u{1b}[31m\\nspoofed"));
+    let expected =
+        format!("created target directory: {}", escape_path(&target));
+    assert!(stdout.contains(&expected), "unexpected output: {stdout}");
     assert!(target.join("test-plugin-0.1.0.van").is_file());
 }
 

@@ -23,8 +23,9 @@ const FORBIDDEN_DIRECTORY: &str = "node_modules";
 /// Largest number of characters of an untrusted value echoed in a
 /// diagnostic.
 ///
-/// Validation and CLI errors interpolate untrusted values, such as a raw
-/// command line argument or a manifest `name` member, into their text.
+/// Validation and CLI errors interpolate untrusted values into their
+/// text: a raw command line argument, a manifest `name` member, or a
+/// file system path.
 /// Capping the rendered value keeps an oversized but legal value from
 /// flooding the terminal or CI log with printable garbage, matching the
 /// bound the `van` dispatcher already applies. Truncated values are
@@ -305,19 +306,25 @@ pub fn validate_no_node_modules(path: &Path) -> Result<(), Error> {
     return Ok(());
 }
 
-/// Renders an untrusted path as a single printable line.
+/// Renders an untrusted path as a single printable line, limited to
+/// [`MAX_ECHO_CHARS`] characters.
 ///
-/// A file name cannot be trusted: one containing control characters could
-/// otherwise inject terminal escape sequences or forge log lines when the
-/// diagnostic is printed, hiding which file actually failed.
+/// A file name cannot be trusted: one containing control characters
+/// could otherwise inject terminal escape sequences or forge log lines
+/// when the diagnostic is printed, hiding which file actually failed.
+/// A path also arrives from an argument or a directory entry and is not
+/// length-bounded, so the rendered value is bounded exactly like
+/// [`escape_text`] bounds an argument or a manifest value: a truncated
+/// path ends with [`ELLIPSIS`] and cannot flood the terminal or a CI
+/// log with one arbitrarily long line.
 ///
 /// # Examples
 ///
-/// A path containing an escape sequence is rendered with visible escapes
-/// instead of emitting the control characters themselves.
+/// A path containing an escape sequence is rendered with visible
+/// escapes instead of emitting the control characters themselves.
 pub fn escape_path(path: &Path) -> String {
     let rendered = path.display().to_string();
-    return escape_line(&rendered);
+    return escape_text(&rendered);
 }
 
 /// Renders an untrusted name or manifest value as a single printable
@@ -329,9 +336,10 @@ pub fn escape_path(path: &Path) -> String {
 /// sequences, and a very long value cannot flood the terminal or a CI
 /// log with printable garbage.
 ///
-/// Use this for values that are not file system paths, such as raw
-/// command line arguments and the manifest `name`, `version`, and
-/// `entrypoint` members, which are echoed in diagnostics.
+/// Use this for every untrusted value echoed in a diagnostic: raw
+/// command line arguments, the manifest `name`, `version`, and
+/// `entrypoint` members, and file system paths, which arrive through
+/// [`escape_path`].
 pub fn escape_text(text: &str) -> String {
     let mut limited = String::new();
     let mut truncated = false;

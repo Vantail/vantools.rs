@@ -9,7 +9,9 @@ use std::process::Output;
 use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
-use vantools::common::validation::escape_manifest;
+use vantools::common::validation::{
+    MAX_ECHO_CHARS, escape_manifest, escape_path,
+};
 use vantools::pack::PackCommand;
 use vantools::verify::{VerifyCommand, VerifyReport};
 use zip::CompressionMethod;
@@ -159,7 +161,7 @@ fn verify_rejects_duplicate_entry_names() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -172,7 +174,7 @@ fn verify_rejects_a_duplicate_manifest_entry() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -185,7 +187,7 @@ fn verify_rejects_duplicate_names_differing_in_encoding() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -203,7 +205,7 @@ fn verify_rejects_entry_names_differing_only_by_case() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -221,7 +223,7 @@ fn verify_rejects_unicode_entry_names_differing_only_by_case() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -239,7 +241,7 @@ fn verify_rejects_case_variant_of_the_manifest_entry() {
     let error = verify_error(&archive);
     let expected = format!(
         "Duplicate archive entry names are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -303,7 +305,7 @@ fn verify_rejects_a_directory_source() {
     let error = verify_error(&archive);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -315,7 +317,7 @@ fn verify_rejects_a_device_source() {
     let error = verify_error(&archive);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -358,8 +360,10 @@ fn verify_rejects_archive_above_the_entry_count_budget() {
     write_many_entries_archive(&archive);
     let error = verify_error(&archive);
     let message = validation_message(error);
-    let expected =
-        format!("Archive has more than 4096 entries: {}", archive.display());
+    let expected = format!(
+        "Archive has more than 4096 entries: {}",
+        escape_path(&archive)
+    );
     assert_eq!(message, expected);
 }
 
@@ -369,8 +373,10 @@ fn verify_rejects_archive_without_manifest() {
     let archive = root.path().join(SAMPLE_ARCHIVE);
     write_archive(&archive, &[("dist/app.ts", "// placeholder\n")]);
     let error = verify_error(&archive);
-    let expected =
-        format!("Missing 'manifest.json' in archive: {}", archive.display());
+    let expected = format!(
+        "Missing 'manifest.json' in archive: {}",
+        escape_path(&archive)
+    );
     assert_validation_message(error, &expected);
 }
 
@@ -382,8 +388,10 @@ fn verify_rejects_archive_without_dist() {
         [("manifest.json", SAMPLE_MANIFEST), ("app.ts", "// placeholder\n")];
     write_archive(&archive, &entries);
     let error = verify_error(&archive);
-    let expected =
-        format!("Missing 'dist' directory in archive: {}", archive.display());
+    let expected = format!(
+        "Missing 'dist' directory in archive: {}",
+        escape_path(&archive)
+    );
     assert_validation_message(error, &expected);
 }
 
@@ -437,7 +445,7 @@ fn verify_reports_a_missing_archive() {
         Error::Runtime(value) => value,
         other => panic!("unexpected error: {other}"),
     };
-    let expected = format!("failed to open archive {}", archive.display());
+    let expected = format!("failed to open archive {}", escape_path(&archive));
     assert!(message.contains(&expected), "unexpected error: {message}");
 }
 
@@ -552,6 +560,27 @@ fn manifest_text_keeps_line_breaks() {
     let text = String::from("{\n  \"name\": \"a\"\n}\n");
     let escaped = escape_manifest(&text);
     assert_eq!(escaped, text);
+}
+
+#[test]
+fn path_text_escapes_control_characters() {
+    let rendered = escape_path(Path::new("dist/a\u{1b}[31m.ts"));
+    assert!(!rendered.contains('\u{1b}'));
+    assert!(rendered.contains("\\u{1b}"));
+}
+
+#[test]
+fn path_text_keeps_a_short_path_intact() {
+    let rendered = escape_path(Path::new("dist/app.ts"));
+    assert_eq!(rendered, "dist/app.ts");
+}
+
+#[test]
+fn path_text_is_bounded() {
+    let long = "a".repeat(MAX_ECHO_CHARS + 10);
+    let rendered = escape_path(Path::new(&long));
+    let expected = format!("{}...", "a".repeat(MAX_ECHO_CHARS));
+    assert_eq!(rendered, expected);
 }
 
 #[test]
