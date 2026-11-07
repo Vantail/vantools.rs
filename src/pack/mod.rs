@@ -6,12 +6,16 @@
 //! argument parsing lives in the `van` binary.
 
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::common::Error;
 use crate::common::cli::CliCommand;
+use crate::common::fs::{refuse_symlink, require_directory, require_file};
 use crate::common::manifest::Manifest;
+use crate::common::plugin::{
+    DIST_DIRECTORY_NAME, MANIFEST_FILE_NAME, require_dist_directory,
+    require_entrypoint,
+};
 use crate::common::validation::{
     escape_path, validate_archive_entry, validate_file_type,
     validate_no_node_modules,
@@ -21,12 +25,6 @@ use crate::common::walk::{WalkEntry, walk_tree};
 mod writer;
 
 use writer::write_archive;
-
-/// Name of the manifest file expected at the source root.
-const MANIFEST_FILE_NAME: &str = "manifest.json";
-
-/// Name of the directory that holds the plugin payload.
-const DIST_DIRECTORY_NAME: &str = "dist";
 
 /// Extension of the archives this command produces.
 const ARCHIVE_EXTENSION: &str = "van";
@@ -229,118 +227,6 @@ impl CliCommand for PackCommand {
     fn help(&self) -> &'static str {
         return "Usage: pack -s <source> -t <target>\n\nOptions:\n  -s, --source <path>  The source directory containing manifest.json and dist/\n  -t, --target <path>  The target directory to place the .van archive\n  -h, --help           Print this help message\n  -v, --version        Print version information";
     }
-}
-
-/// Return an error unless `path` is an existing directory.
-///
-/// A symlink at the path is refused instead of followed, so the source
-/// directory obeys the same no-symlink policy as its `manifest.json`,
-/// `dist/`, and the archive path.
-fn require_directory(path: &Path, description: &str) -> Result<(), Error> {
-    refuse_symlink(path)?;
-    if path.is_dir() {
-        return Ok(());
-    }
-    return Err(Error::Runtime(format!(
-        "{description} not found: {}",
-        escape_path(path)
-    )));
-}
-
-/// Refuse `path` when it is a symbolic link instead of following it.
-///
-/// The path is inspected with [`fs::symlink_metadata`], so a symlink is
-/// seen as a link whether or not its own target exists. A missing path
-/// passes through, because each caller reports a missing path in its
-/// own way. This mirrors the refusal `writer` applies to the archive
-/// destination.
-///
-/// # Errors
-///
-/// Returns [`Error::ValidationError`] for a symlink and
-/// [`Error::Runtime`] when the path cannot be inspected.
-fn refuse_symlink(path: &Path) -> Result<(), Error> {
-    let metadata = fs::symlink_metadata(path);
-    match metadata {
-        Ok(value) => {
-            if value.file_type().is_symlink() {
-                return Err(Error::ValidationError(format!(
-                    "Symlinks or non-regular files are not allowed: {}",
-                    escape_path(path)
-                )));
-            }
-            return Ok(());
-        }
-        Err(error) => {
-            if error.kind() == io::ErrorKind::NotFound {
-                return Ok(());
-            }
-            return Err(Error::Runtime(format!(
-                "failed to inspect {}: {error}",
-                escape_path(path)
-            )));
-        }
-    }
-}
-
-/// Return an error unless `<source>/dist` is an existing directory.
-///
-/// The reported path is the source directory, because a missing `dist/`
-/// means the source is not a packable plugin rather than that the user
-/// passed a wrong `dist` path.
-fn require_dist_directory(
-    source: &Path,
-    dist_path: &Path,
-) -> Result<(), Error> {
-    if dist_path.is_dir() {
-        return Ok(());
-    }
-    return Err(Error::ValidationError(format!(
-        "Missing 'dist' directory in source: {}",
-        escape_path(source)
-    )));
-}
-
-/// Return an error unless `<dist>/<entrypoint>` is an existing file.
-///
-/// The `entrypoint` is validated as a relative archive path when the
-/// manifest is read, so joining it onto `dist_path` cannot escape the
-/// `dist` directory.
-///
-/// A symlink at the entrypoint path is refused instead of followed, so
-/// the dedicated check enforces the no-symlink policy itself instead of
-/// relying on the later `dist/` walk. The link is rejected with the
-/// same diagnostic [`validate_file_type`] uses for `dist/` and its
-/// contents. A missing or non-regular path, such as a directory or a
-/// FIFO, is reported as missing because the entrypoint must be a
-/// regular file.
-///
-/// # Errors
-///
-/// Returns [`Error::ValidationError`] for a symlinked, non-regular, or
-/// missing entrypoint, and [`Error::Runtime`] when the path cannot be
-/// inspected.
-fn require_entrypoint(dist_path: &Path, entrypoint: &str) -> Result<(), Error> {
-    let entrypoint_path = dist_path.join(entrypoint);
-    refuse_symlink(&entrypoint_path)?;
-    if entrypoint_path.is_file() {
-        return Ok(());
-    }
-    return Err(Error::ValidationError(format!(
-        "Entrypoint file not found in dist: {}",
-        escape_path(&entrypoint_path)
-    )));
-}
-
-/// Return an error unless `path` is an existing regular file.
-fn require_file(path: &Path, description: &str) -> Result<(), Error> {
-    if path.is_file() {
-        return Ok(());
-    }
-    return Err(Error::Runtime(format!(
-        "{description} not found: {}",
-        escape_path(path)
-    )));
 }
 
 /// Collect the files of `source` that the archive layout excludes.

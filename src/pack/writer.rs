@@ -15,12 +15,12 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::common::Error;
+use crate::common::plugin::MANIFEST_FILE_NAME;
 use crate::common::validation::{
     escape_path, escape_text, open_validated_file,
 };
 
 use super::ArchiveEntry;
-use super::MANIFEST_FILE_NAME;
 
 /// Size of the buffer used to copy one source file into the archive.
 const COPY_BUFFER_BYTES: usize = 8 * 1024;

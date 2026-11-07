@@ -4,7 +4,9 @@
 pub mod archive;
 pub mod cli;
 pub mod error;
+pub mod fs;
 pub mod manifest;
+pub mod plugin;
 pub mod validation;
 pub mod walk;
 
