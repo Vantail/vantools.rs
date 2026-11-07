@@ -28,6 +28,30 @@ const BAD_ARCHIVE: &str = "bad-plugin-0.1.0.van";
 const RAW_MANIFEST: &str = "{\n  \"name\": \"raw-plugin\",\n  \"version\": \"2.0.0\",\n  \"entrypoint\": \"app.ts\",\n  \"extra\": \"ignored\"\n}";
 
 #[test]
+fn pack_rejects_archive_name_above_name_max() {
+    let root = temp_root();
+    let source = root.path().join("plugin");
+    let dist = source.join("dist");
+    create_dir(&dist);
+    // The name passes the 64-character cap but measures 256 bytes, so
+    // the composed archive name is longer than NAME_MAX allows.
+    let name = "🎉".repeat(64);
+    let manifest = format!(
+        "{{\"name\":\"{name}\",\"version\":\"1.2.3\",\"entrypoint\":\"app.ts\"}}"
+    );
+    write_file(&source.join("manifest.json"), &manifest);
+    write_file(&dist.join("app.ts"), "// entrypoint\n");
+    let target = root.path().join("target");
+    let error = pack_error(&source, &target);
+    assert_validation_message(
+        error,
+        "Manifest name and version must not exceed 255 bytes in total",
+    );
+    // The rejection happens before the target directory is created.
+    assert!(!target.exists());
+}
+
+#[test]
 fn pack_rejects_missing_dist_directory() {
     let root = temp_root();
     let source = root.path().join("plugin");
