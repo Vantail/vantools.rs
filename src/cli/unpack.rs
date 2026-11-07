@@ -26,10 +26,6 @@ const SOURCE_LONG_FLAG: &str = "--source";
 
 /// Long form of the target flag of the `unpack` subcommand.
 const TARGET_LONG_FLAG: &str = "--target";
-
-/// Message the scaffold reports after a successful validation.
-const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented";
-
 /// An `unpack` invocation resolved into an action to execute.
 ///
 /// The argument scan stops at the first `--help` or `--version` flag
@@ -148,13 +144,12 @@ fn run_unpack_command(
     return Ok(());
 }
 
-/// Print the report of an unpack that validated its archive.
+/// Print the report of a completed unpack.
 ///
 /// The check lines keep the wording of the `verify` report, because
-/// both commands run the same inspection. Extraction is not implemented
-/// yet, so the last line says so instead of reporting files, and the
-/// requested paths follow as informational lines. Every interpolated
-/// path is escaped like any other diagnostic.
+/// both commands run the same inspection, and the extraction lines name
+/// the archive that was read and the directory that was installed. Every
+/// interpolated path is escaped like any other diagnostic.
 fn print_report(report: &UnpackReport) {
     log_ok("Check passed", "Paths and ZIP structure");
     log_ok("Check passed", "manifest.json is present and valid");
@@ -162,8 +157,8 @@ fn print_report(report: &UnpackReport) {
     let entrypoint_check =
         format!("dist/ and entrypoint ({entrypoint}) are present");
     log_ok("Check passed", &entrypoint_check);
-    log_ok("Ready to extract", NOT_IMPLEMENTED_MESSAGE);
-    log_info("Archive", &escape_path(&report.archive));
-    log_info("Target directory", &escape_path(&report.target));
+    log_info("Extracting archive", &escape_path(&report.archive));
+    log_ok("Successfully extracted archive", &escape_path(&report.target));
+    log_info("Files written", &report.files_written.to_string());
     return;
 }

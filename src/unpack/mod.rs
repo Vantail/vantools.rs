@@ -1,10 +1,11 @@
 //! Implementation of the `unpack` command.
 //!
 //! A run validates the archive with the same inspection the `verify`
-//! command runs, then returns an [`UnpackReport`] with the validated
-//! manifest. Extraction itself is not implemented yet: validation runs
+//! command runs, then extracts the payload into a temporary sibling
+//! directory and renames that directory onto the target. Validation runs
 //! first and writes nothing, so an invalid archive fails before the
-//! target directory would be touched.
+//! target directory is touched, and an existing target is refused
+//! instead of overwritten.
 
 use std::path::PathBuf;
 
@@ -13,12 +14,16 @@ use crate::common::archive;
 use crate::common::cli::CliCommand;
 use crate::common::manifest::Manifest;
 
+mod writer;
+
 /// The `unpack` command.
 ///
-/// Validates an existing `.van` archive before extracting it into a
-/// target directory. Only the validation phase is implemented, so a run
-/// reads and validates the archive, writes nothing, and returns an
-/// [`UnpackReport`] with the validated manifest.
+/// Validates an existing `.van` archive and extracts it into a target
+/// directory that must not exist yet. The extracted layout matches the
+/// source layout `pack` archives: `<target>/manifest.json` and the
+/// payload below `<target>/dist/`. The files are written into a
+/// temporary sibling directory and moved into place with one rename, so
+/// the target appears complete or not at all.
 #[non_exhaustive]
 pub struct UnpackCommand {
     /// The `.van` archive to extract; must be a regular file.
@@ -28,18 +33,16 @@ pub struct UnpackCommand {
 }
 
 /// Everything an unpack run produced.
-///
-/// Validation is the only phase implemented so far, so the report names
-/// the requested archive, the target directory, and the validated
-/// manifest.
 #[non_exhaustive]
 pub struct UnpackReport {
-    /// Path of the archive that was validated.
+    /// Path of the archive that was extracted.
     pub archive: PathBuf,
-    /// Path of the directory the files would be written to.
+    /// Path of the directory the files were written to.
     pub target: PathBuf,
     /// The parsed and validated manifest.
     pub manifest: Manifest,
+    /// Number of files written, including the manifest.
+    pub files_written: usize,
 }
 
 impl UnpackCommand {
@@ -54,19 +57,26 @@ impl UnpackCommand {
     /// Run the command and return what it produced.
     ///
     /// The archive is validated before anything is written, so an
-    /// invalid archive leaves the file system untouched: the target
-    /// directory is neither created nor filled.
+    /// invalid archive leaves the file system untouched. A target that
+    /// already exists is refused, and a failed extraction removes its
+    /// temporary directory.
     ///
     /// # Errors
     ///
     /// Returns the first validation or runtime error the shared
-    /// inspection produces.
+    /// inspection produces, and the errors of the extraction.
     pub fn run(&self) -> Result<UnpackReport, Error> {
         let contents = archive::inspect(&self.source)?;
+        let files_written = writer::extract_archive(
+            &self.source,
+            &self.target,
+            &contents.manifest_bytes,
+        )?;
         return Ok(UnpackReport {
             archive: self.source.clone(),
             target: self.target.clone(),
             manifest: contents.manifest,
+            files_written,
         });
     }
 }
