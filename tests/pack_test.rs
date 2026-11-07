@@ -547,6 +547,70 @@ fn validate_archive_entry_accepts_valid_paths() {
 }
 
 #[test]
+fn validate_archive_entry_rejects_reserved_device_names() {
+    let error = entry_error("dist/con.txt");
+    assert_validation_message(
+        error,
+        "Reserved device names are not allowed in paths: dist/con.txt",
+    );
+}
+
+#[test]
+fn validate_archive_entry_rejects_reserved_device_names_in_any_directory() {
+    let error = entry_error("aux/dist/app.ts");
+    assert_validation_message(
+        error,
+        "Reserved device names are not allowed in paths: aux/dist/app.ts",
+    );
+}
+
+#[test]
+fn validate_archive_entry_rejects_a_trailing_dot() {
+    let error = entry_error("dist/app.ts.");
+    assert_validation_message(
+        error,
+        "Trailing dots or spaces are not allowed in paths: dist/app.ts.",
+    );
+}
+
+#[test]
+fn validate_archive_entry_rejects_a_trailing_space() {
+    let error = entry_error("dist/app.ts ");
+    assert_validation_message(
+        error,
+        "Trailing dots or spaces are not allowed in paths: dist/app.ts ",
+    );
+}
+
+#[test]
+fn validate_archive_entry_rejects_a_trailing_dot_on_a_directory() {
+    let error = entry_error("dist./app.ts");
+    assert_validation_message(
+        error,
+        "Trailing dots or spaces are not allowed in paths: dist./app.ts",
+    );
+}
+
+#[test]
+fn validate_archive_entry_accepts_names_containing_reserved_words() {
+    let accepted = validate_archive_entry("dist/console.ts");
+    match accepted {
+        Ok(()) => {}
+        Err(error) => panic!("valid path was rejected: {error}"),
+    }
+    let longer = validate_archive_entry("dist/com10.ts");
+    match longer {
+        Ok(()) => {}
+        Err(error) => panic!("valid path was rejected: {error}"),
+    }
+    let prefixed = validate_archive_entry("dist/mycon.ts");
+    match prefixed {
+        Ok(()) => {}
+        Err(error) => panic!("valid path was rejected: {error}"),
+    }
+}
+
+#[test]
 fn validate_no_node_modules_rejects_forbidden_component() {
     let result = validate_no_node_modules(Path::new("dist/node_modules"));
     let error = match result {
