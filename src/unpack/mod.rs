@@ -6,9 +6,12 @@
 //! therefore lands in its own directory, so several plugins can share one
 //! parent folder. Validation runs first and writes nothing, so an invalid
 //! archive fails before the target is touched, and an existing
-//! `<name>-<version>` directory is refused instead of overwritten.
+//! `<name>-<version>` directory is refused instead of overwritten. The
+//! target path itself must be a real directory or missing; a symbolic
+//! link or a non-directory entry there is refused rather than followed.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::common::Error;
@@ -100,8 +103,20 @@ impl UnpackCommand {
     }
 }
 
-/// Create `path` together with any missing parent directory.
+/// Create the target directory when it does not exist yet.
+///
+/// An existing entry at the path is refused unless it is a real
+/// directory, so a symbolic link or a file is reported instead of being
+/// followed or replaced. Only a missing path is created, matching the
+/// no-symlink policy `pack` applies to its target.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the path exists but is not a
+/// real directory, and [`Error::Runtime`] when it cannot be inspected
+/// or created.
 fn ensure_directory(path: &Path) -> Result<(), Error> {
+    refuse_non_directory(path)?;
     let created = fs::create_dir_all(path);
     return match created {
         Ok(()) => Ok(()),
@@ -109,6 +124,41 @@ fn ensure_directory(path: &Path) -> Result<(), Error> {
             "failed to create target directory {}: {error}",
             escape_path(path)
         ))),
+    };
+}
+
+/// Refuse a path that exists as anything other than a real directory.
+///
+/// The path is inspected with [`fs::symlink_metadata`], so a symbolic
+/// link is seen as a link, whether or not its target exists. A missing
+/// path passes through, so the caller can create it.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symbolic link or any other
+/// non-directory entry, and [`Error::Runtime`] when the path cannot be
+/// inspected.
+fn refuse_non_directory(path: &Path) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path);
+    return match metadata {
+        Ok(value) => {
+            if value.file_type().is_dir() {
+                return Ok(());
+            }
+            Err(Error::ValidationError(format!(
+                "Target is a symlink or not a directory: {}",
+                escape_path(path)
+            )))
+        }
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )))
+        }
     };
 }
 
