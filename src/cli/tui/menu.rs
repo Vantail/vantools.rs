@@ -30,12 +30,15 @@ use vantools::common::Error;
 ///
 /// The rows are kept verbatim: the face depends on the exact column of
 /// every character, so no row may be reflowed or trimmed.
-const LOGO_ROWS: [&str; 5] = [
-    " __     __     _       _   _  ",
-    " \\ \\   / /    / \\     | \\ | | ",
-    "  \\ \\ / /    / _ \\    |  \\| | ",
-    "   \\ V /    / ___ \\   | |\\  | ",
-    "    \\_/    /_/   \\_\\  |_| \\_| ",
+const LOGO_ROWS: [&str; 8] = [
+    "                  _______          _     ",
+    "                 |__   __|        | |    ",
+    " __   ____ _ _ __   | | ___   ___ | |___ ",
+    r" \ \ / / _` | '_ \  | |/ _ \ / _ \| / __|",
+    r"  \ V / (_| | | | |_| | (_) | (_) | \__ \",
+    r"   \_/ \__,_|_| |_(_)_|\___/ \___/|_|___/",
+    "                                         ",
+    "                                         ",
 ];
 
 /// Slogan shown below the wordmark.
