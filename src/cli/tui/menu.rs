@@ -5,6 +5,10 @@
 //! the command the user confirmed. Raw mode and the alternate screen
 //! belong to a [`TerminalGuard`], which restores both when the menu
 //! leaves its scope, including when it returns an error.
+//!
+//! The layout is written for at least 80 columns. A narrower window
+//! gets a short notice and exits on the next key press, because a
+//! wrapped frame breaks the wordmark and scatters the menu rows.
 
 use std::io;
 use std::io::IsTerminal;
@@ -18,7 +22,7 @@ use crossterm::queue;
 use crossterm::style::{Print, Stylize};
 use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
-    disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, size,
 };
 use vantools::common::Error;
 
@@ -27,11 +31,11 @@ use vantools::common::Error;
 /// The rows are kept verbatim: the face depends on the exact column of
 /// every character, so no row may be reflowed or trimmed.
 const LOGO_ROWS: [&str; 5] = [
-    " _   __    _    _     _____           _",
-    "| | / /   / \\  | \\ | | |_   _|__   ___ | |___",
-    "| |/ /   / _ \\ |  \\| |   | |/ _ \\ / _ \\/ __|",
-    "| V /   / ___ \\| |\\  |   | | (_) |  __/\\__ \\",
-    "|_/   /_/   \\_\\_| \\_|   |_|\\___/ \\___||___/",
+    " __     __     _       _   _  ",
+    " \\ \\   / /    / \\     | \\ | | ",
+    "  \\ \\ / /    / _ \\    |  \\| | ",
+    "   \\ V /    / ___ \\   | |\\  | ",
+    "    \\_/    /_/   \\_\\  |_| \\_| ",
 ];
 
 /// Slogan shown below the wordmark.
@@ -39,6 +43,16 @@ const SLOGAN: &str = "The van Plugin- and Packagemanager CLI.";
 
 /// Hint line shown below the commands.
 const HINT: &str = "  ↑↓ Select | Enter Confirm | Q Quit";
+
+/// Minimum number of columns the start menu is laid out for.
+const MIN_WIDTH: u16 = 80;
+
+/// Message shown when the window is narrower than 80 columns.
+const NARROW_MESSAGE: &str =
+    "Terminal is too narrow. Please resize your window to at least 80 columns.";
+
+/// Prompt shown below the narrow message.
+const NARROW_HINT: &str = "Press any key to exit.";
 
 /// Width the command names are padded to before the description.
 const LABEL_WIDTH: usize = 10;
@@ -72,17 +86,17 @@ const MENU_ENTRIES: [MenuEntry; 4] = [
     MenuEntry {
         choice: MenuChoice::Pack,
         label: "Pack",
-        description: "Compress a plugin directory into a .van archive",
+        description: "Compress a plugin directory",
     },
     MenuEntry {
         choice: MenuChoice::Verify,
         label: "Verify",
-        description: "Validate the integrity and security of a .van archive",
+        description: "Validate an archive",
     },
     MenuEntry {
         choice: MenuChoice::Unpack,
         label: "Unpack",
-        description: "Extract a .van archive into a plugin directory",
+        description: "Extract an archive",
     },
     MenuEntry {
         choice: MenuChoice::Quit,
@@ -108,6 +122,9 @@ pub fn show_menu() -> Result<MenuChoice, Error> {
         )));
     }
     let _guard = TerminalGuard::acquire()?;
+    if terminal_width() < MIN_WIDTH {
+        return show_narrow_notice();
+    }
     let mut selected: usize = 0;
     loop {
         draw_menu(selected)?;
@@ -145,6 +162,35 @@ pub fn clear_screen() {
     let mut stdout = io::stdout();
     let _ = execute!(stdout, Clear(ClearType::All), MoveTo(0, 0));
     return;
+}
+
+/// Return the current terminal width in columns.
+///
+/// A measurement that the platform cannot provide falls back to the
+/// minimum width, so the menu still draws instead of failing.
+fn terminal_width() -> u16 {
+    let measured = size();
+    return match measured {
+        Ok(value) => value.0,
+        Err(_) => MIN_WIDTH,
+    };
+}
+
+/// Explain that the window is too narrow and wait for one key press.
+fn show_narrow_notice() -> Result<MenuChoice, Error> {
+    let mut text = String::from(NARROW_MESSAGE);
+    text.push_str("\n\n");
+    text.push_str(NARROW_HINT);
+    text.push('\n');
+    draw_text(&text)?;
+    let read = event::read();
+    return match read {
+        Ok(_) => Ok(MenuChoice::Quit),
+        Err(error) => {
+            let message = format!("failed to read a key press: {error}");
+            Err(Error::Runtime(message))
+        }
+    };
 }
 
 /// Report whether the menu can read keys and draw at all.
@@ -252,9 +298,17 @@ fn pad_label(label: &str) -> String {
 /// Clear the screen and draw the menu with the current selection.
 fn draw_menu(selected: usize) -> Result<(), Error> {
     let frame = build_frame(selected);
+    return draw_text(&frame);
+}
+
+/// Replace the screen with `text`, starting at the top-left corner.
+///
+/// Clearing first keeps a shorter frame from leaving parts of the
+/// previous selection behind.
+fn draw_text(text: &str) -> Result<(), Error> {
     let mut stdout = io::stdout();
     let queued =
-        queue!(stdout, Clear(ClearType::All), MoveTo(0, 0), Print(frame));
+        queue!(stdout, Clear(ClearType::All), MoveTo(0, 0), Print(text));
     if let Err(error) = queued {
         let message = format!("failed to draw the menu: {error}");
         return Err(Error::Runtime(message));
@@ -312,6 +366,26 @@ mod tests {
     fn up_moves_to_the_previous_entry_and_wraps() {
         assert_eq!(previous_index(1), 0);
         assert_eq!(previous_index(0), 3);
+    }
+
+    #[test]
+    fn logo_rows_have_a_uniform_width() {
+        let first = match LOGO_ROWS.first() {
+            Some(value) => value.len(),
+            None => return,
+        };
+        for row in LOGO_ROWS {
+            assert_eq!(row.len(), first, "row is not uniform: {row:?}");
+        }
+    }
+
+    #[test]
+    fn frame_fits_the_minimum_width() {
+        let frame = build_frame(0);
+        let limit = usize::from(MIN_WIDTH) - 1;
+        for line in frame.lines() {
+            assert!(line.len() <= limit, "line is too long: {line:?}");
+        }
     }
 
     #[test]
