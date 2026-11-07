@@ -34,6 +34,18 @@ pub const MAX_ECHO_CHARS: usize = 64;
 /// Marker appended to a rendered untrusted value that was truncated.
 const ELLIPSIS: &str = "...";
 
+/// File names Windows reserves for devices.
+///
+/// A name in this list resolves to a device rather than to a regular
+/// file, in every directory and with or without an extension, so an
+/// archive entry with such a name cannot be extracted to the file its
+/// own name describes.
+const RESERVED_DEVICE_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6",
+    "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6",
+    "LPT7", "LPT8", "LPT9",
+];
+
 /// Validates a raw relative archive entry path.
 ///
 /// A single trailing slash is accepted, because a standard ZIP archive
@@ -42,8 +54,9 @@ const ELLIPSIS: &str = "...";
 /// NFC path without an empty segment.
 ///
 /// Rejects backslashes, absolute paths, drive letters, empty path
-/// segments, `.` and `..` traversal segments, and paths that are not
-/// normalized to Unicode NFC.
+/// segments, `.` and `..` traversal segments, paths that are not
+/// normalized to Unicode NFC, Windows reserved device names, and
+/// segments that end with a dot or a space.
 ///
 /// # Errors
 ///
@@ -75,6 +88,7 @@ pub fn validate_archive_entry(path_str: &str) -> Result<(), Error> {
             escape_text(path_str)
         )));
     }
+    validate_windows_segments(entry_path)?;
     return Ok(());
 }
 
@@ -89,6 +103,63 @@ fn strip_directory_marker(path_str: &str) -> &str {
         Some(value) => value,
         None => path_str,
     };
+}
+
+/// Validates every segment of a relative archive path as a portable
+/// Windows file name.
+///
+/// Win32 resolves a reserved device name to a device instead of a file,
+/// and it removes a trailing dot or space from every component of a
+/// path. An entry subject to either rule therefore does not name the
+/// file it was verified as once it is extracted on Windows, which is
+/// the hazard the Unicode NFC rule covers for macOS.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for the first segment that is a
+/// reserved device name or ends with a dot or a space.
+fn validate_windows_segments(entry_path: &str) -> Result<(), Error> {
+    for segment in entry_path.split('/') {
+        if is_reserved_device_name(segment) {
+            return Err(Error::ValidationError(format!(
+                "Reserved device names are not allowed in paths: {}",
+                escape_text(entry_path)
+            )));
+        }
+        if ends_with_dot_or_space(segment) {
+            return Err(Error::ValidationError(format!(
+                "Trailing dots or spaces are not allowed in paths: {}",
+                escape_text(entry_path)
+            )));
+        }
+    }
+    return Ok(());
+}
+
+/// Returns true when `segment` names a reserved Windows device.
+///
+/// The comparison ignores ASCII case and stops at the first dot,
+/// because Win32 treats `con`, `Con`, and `con.txt` alike while
+/// `console` is an ordinary file name.
+fn is_reserved_device_name(segment: &str) -> bool {
+    let base = match segment.split_once('.') {
+        Some(value) => value.0,
+        None => segment,
+    };
+    for reserved in RESERVED_DEVICE_NAMES {
+        if base.eq_ignore_ascii_case(reserved) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Returns true when `segment` ends with a dot or a space.
+///
+/// Win32 drops both characters when it resolves a path, so such a
+/// segment would not name the file the archive lists.
+fn ends_with_dot_or_space(segment: &str) -> bool {
+    return segment.ends_with('.') || segment.ends_with(' ');
 }
 
 /// Validates that `path` is a regular file or a directory.

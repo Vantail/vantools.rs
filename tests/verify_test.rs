@@ -245,6 +245,40 @@ fn verify_rejects_case_variant_of_the_manifest_entry() {
 }
 
 #[test]
+fn verify_rejects_a_windows_reserved_device_name() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/aux.js", "// device shadowing\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Reserved device names are not allowed in paths: dist/aux.js",
+    );
+}
+
+#[test]
+fn verify_rejects_an_entry_name_ending_in_a_dot() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist/helper.ts.", "// stripped name\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Trailing dots or spaces are not allowed in paths: dist/helper.ts.",
+    );
+}
+
+#[test]
 fn verify_accepts_regular_entries_with_permissions() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);

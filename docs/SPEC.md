@@ -91,6 +91,8 @@ Archive entry names MUST:
 - be relative (no leading `/`, no drive letters),
 - not contain empty, `.`, or `..` segments,
 - be unique within the archive, ignoring case (two names that differ only by case would collide when extracted on a case-insensitive file system),
+- not name a Windows reserved device (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`) in any segment, with or without an extension,
+- not end any segment with a dot or a space,
 - not represent symbolic links or other non-regular files.
 
 Readers MUST reject archives that violate these rules. These rules prevent path traversal ("zip slip") and ensure the archive can be extracted safely.
