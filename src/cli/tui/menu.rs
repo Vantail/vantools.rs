@@ -179,9 +179,9 @@ fn terminal_width() -> u16 {
 /// Explain that the window is too narrow and wait for one key press.
 fn show_narrow_notice() -> Result<MenuChoice, Error> {
     let mut text = String::from(NARROW_MESSAGE);
-    text.push_str("\n\n");
+    text.push_str("\r\n\r\n");
     text.push_str(NARROW_HINT);
-    text.push('\n');
+    text.push_str("\r\n");
     draw_text(&text)?;
     let read = event::read();
     return match read {
@@ -242,24 +242,28 @@ impl Drop for TerminalGuard {
 }
 
 /// Render the whole menu for the given selection.
+///
+/// Every line ends with CR LF. Raw mode turns off the terminal's output
+/// post-processing, so a bare line feed moves down without returning to
+/// the first column and each line would start where the previous ended.
 fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
     for row in LOGO_ROWS {
         frame.push_str(row);
-        frame.push('\n');
+        frame.push_str("\r\n");
     }
-    frame.push('\n');
+    frame.push_str("\r\n");
     frame.push_str(SLOGAN);
-    frame.push_str("\n\n");
+    frame.push_str("\r\n\r\n");
     let mut index: usize = 0;
     while index < MENU_ENTRIES.len() {
         frame.push_str(&render_entry(index, selected));
-        frame.push('\n');
+        frame.push_str("\r\n");
         index += 1;
     }
-    frame.push('\n');
+    frame.push_str("\r\n");
     frame.push_str(HINT);
-    frame.push('\n');
+    frame.push_str("\r\n");
     return frame;
 }
 
@@ -376,6 +380,21 @@ mod tests {
         };
         for row in LOGO_ROWS {
             assert_eq!(row.len(), first, "row is not uniform: {row:?}");
+        }
+    }
+
+    #[test]
+    fn frame_uses_carriage_returns_between_lines() {
+        let frame = build_frame(0);
+        let mut previous = ' ';
+        for character in frame.chars() {
+            if character == '\n' {
+                assert_eq!(
+                    previous, '\r',
+                    "line feed without a carriage return"
+                );
+            }
+            previous = character;
         }
     }
 
