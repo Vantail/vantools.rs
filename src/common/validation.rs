@@ -13,6 +13,8 @@ use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+#[cfg(windows)]
+use same_file::Handle;
 use unicode_normalization::is_nfc;
 
 use crate::common::Error;
@@ -211,15 +213,16 @@ pub fn validated_metadata(path: &Path) -> Result<fs::Metadata, Error> {
 /// Opens `path` only when it still refers to the file that passed
 /// validation.
 ///
-/// The path is inspected with [`validated_metadata`] immediately before
-/// it is opened, the opened handle is checked again through
-/// [`File::metadata`], and on Unix both metadata snapshots are compared
-/// by device and inode numbers. A path swapped for a symlink or another
-/// file between the validation and the open is therefore rejected
-/// instead of contributing content from elsewhere, both around and
-/// inside the check-then-open window. On other platforms stable `std`
-/// does not expose a comparable file identity, so only the file type of
-/// the opened handle is checked.
+/// The identity of the entry is captured immediately before the path is
+/// opened, and the opened handle is compared with that identity. A path
+/// swapped for a symlink or another file between the two steps is
+/// therefore rejected instead of contributing content from elsewhere,
+/// both around and inside the check-then-open window.
+///
+/// The comparison is exact on Unix, by device and inode numbers, and on
+/// Windows, by volume serial number and file index. On the remaining
+/// platforms stable `std` exposes no file identity, so only the file
+/// type of the opened handle is checked.
 ///
 /// Every caller that reads a file from a directory it does not fully
 /// control should open it this way, so the identity check is applied
@@ -231,7 +234,7 @@ pub fn validated_metadata(path: &Path) -> Result<fs::Metadata, Error> {
 /// non-regular file, or a path that was replaced after validation, and
 /// [`Error::Runtime`] when the path cannot be opened or inspected.
 pub fn open_validated_file(path: &Path) -> Result<File, Error> {
-    let validated = validated_metadata(path)?;
+    let identity = validated_identity(path)?;
     let opened = File::open(path);
     let file = match opened {
         Ok(value) => value,
@@ -242,16 +245,7 @@ pub fn open_validated_file(path: &Path) -> Result<File, Error> {
             )));
         }
     };
-    let metadata = match file.metadata() {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to inspect {}: {error}",
-                escape_path(path)
-            )));
-        }
-    };
-    if !is_same_validated_file(&validated, &metadata) {
+    if !is_same_validated_file(&identity, &file, path)? {
         return Err(Error::ValidationError(format!(
             "Source file changed or was replaced while packing: {}",
             escape_path(path)
@@ -260,32 +254,199 @@ pub fn open_validated_file(path: &Path) -> Result<File, Error> {
     return Ok(file);
 }
 
-/// Returns true when the opened handle still refers to the file that
-/// passed validation.
+/// Identity of the entry that passed validation.
 ///
-/// A validated file and a swap target are different file system entries
-/// with different device and inode numbers. On Unix stable `std` reads
-/// both numbers from [`fs::Metadata`], so the comparison is exact. On
-/// other platforms only the file type is compared, which is what the
-/// earlier open-handle check guaranteed by itself.
+/// The value is captured before the path is opened and compared with the
+/// opened handle afterwards, so a path replaced in between is detected.
+#[cfg(unix)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+/// Identity of the entry that passed validation.
+///
+/// Stable `std` exposes no device and inode numbers on Windows, so the
+/// identity is a handle to the file the path resolved to. Comparing two
+/// handles is exact: the `same-file` crate reads the volume serial
+/// number and file index the platform associates with each one.
+#[cfg(windows)]
+struct FileIdentity {
+    handle: Handle,
+}
+
+/// Identity placeholder for platforms without an identity check.
+///
+/// See [`is_same_validated_file`] for why only the file type is
+/// compared there.
+#[cfg(not(any(unix, windows)))]
+struct FileIdentity;
+
+/// Validates `path` and captures the identity of the entry it names.
+///
+/// On Unix a single `lstat` both rejects symbolic links and non-regular
+/// files and supplies the device and inode numbers, so the identity
+/// covers the whole window around the open.
+///
+/// On Windows stable `std` exposes no comparable identity, so a handle
+/// is opened first and the validation follows. Validating first would
+/// leave a window in which a symbolic link planted before the handle is
+/// opened would be followed both by the handle and by the open that
+/// reads the content, which is the swap this check exists to catch.
+///
+/// # Errors
+///
+/// Returns the same errors as [`validated_metadata`], and
+/// [`Error::Runtime`] when the identity cannot be read.
+#[cfg(unix)]
+fn validated_identity(path: &Path) -> Result<FileIdentity, Error> {
+    let validated = validated_metadata(path)?;
+    return Ok(FileIdentity {
+        device: validated.dev(),
+        inode: validated.ino(),
+    });
+}
+
+/// Validates `path` and captures the identity of the entry it names.
+///
+/// See the Unix variant of this function for why the handle is opened
+/// before the entry is validated.
+///
+/// # Errors
+///
+/// Returns the same errors as [`validated_metadata`], and
+/// [`Error::Runtime`] when the identity cannot be read.
+#[cfg(windows)]
+fn validated_identity(path: &Path) -> Result<FileIdentity, Error> {
+    let opened = Handle::from_path(path);
+    let handle = match opened {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    // The handle above identifies the target; this call rejects a
+    // symbolic link or a non-regular file sitting at the path now.
+    validated_metadata(path)?;
+    return Ok(FileIdentity {
+        handle,
+    });
+}
+
+/// Validates `path` and captures the identity of the entry it names.
+///
+/// See the Unix variant of this function for why only the file type can
+/// be compared on this platform.
+///
+/// # Errors
+///
+/// Returns the same errors as [`validated_metadata`].
+#[cfg(not(any(unix, windows)))]
+fn validated_identity(path: &Path) -> Result<FileIdentity, Error> {
+    validated_metadata(path)?;
+    return Ok(FileIdentity);
+}
+
+/// Returns true when `file` still refers to the entry that passed
+/// validation.
+///
+/// A validated entry and a swap target are different file system
+/// entries. On Unix the opened handle is compared with the device and
+/// inode numbers captured during validation. On Windows the two handles
+/// are compared by volume serial number and file index. Both are exact,
+/// so a swap is rejected instead of being read.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the opened handle cannot be
+/// inspected.
 #[cfg(unix)]
 fn is_same_validated_file(
-    validated: &fs::Metadata,
-    opened: &fs::Metadata,
-) -> bool {
-    return validated.dev() == opened.dev() && validated.ino() == opened.ino();
+    identity: &FileIdentity,
+    file: &File,
+    path: &Path,
+) -> Result<bool, Error> {
+    let opened = match file.metadata() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    let same_device = identity.device == opened.dev();
+    let same_inode = identity.inode == opened.ino();
+    return Ok(same_device && same_inode);
+}
+
+/// Returns true when `file` still refers to the entry that passed
+/// validation.
+///
+/// The identity captured during validation and the opened handle are
+/// compared by the `same-file` crate, which reads the volume serial
+/// number and file index of each. A duplicate handle is taken because
+/// the comparison consumes it while the caller keeps reading the file.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when a duplicate handle cannot be taken
+/// or inspected.
+#[cfg(windows)]
+fn is_same_validated_file(
+    identity: &FileIdentity,
+    file: &File,
+    path: &Path,
+) -> Result<bool, Error> {
+    let duplicate = match file.try_clone() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    let opened = match Handle::from_file(duplicate) {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    return Ok(identity.handle == opened);
 }
 
 /// Returns true when the opened handle refers to a regular file.
 ///
-/// See [`is_same_validated_file`] for why stable `std` offers no exact
-/// file identity outside Unix.
-#[cfg(not(unix))]
+/// See the Unix variant of this function for why stable `std` offers no
+/// exact file identity on this platform.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the opened handle cannot be
+/// inspected.
+#[cfg(not(any(unix, windows)))]
 fn is_same_validated_file(
-    validated: &fs::Metadata,
-    opened: &fs::Metadata,
-) -> bool {
-    return validated.file_type().is_file() && opened.file_type().is_file();
+    _identity: &FileIdentity,
+    file: &File,
+    path: &Path,
+) -> Result<bool, Error> {
+    let opened = match file.metadata() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(path)
+            )));
+        }
+    };
+    return Ok(opened.file_type().is_file());
 }
 
 /// Validates that no component of `path` is named `node_modules`.
