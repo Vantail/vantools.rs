@@ -17,10 +17,11 @@ mod validation;
 ///
 /// Opens the archive at `source` and validates its structure without
 /// extracting it: every entry name must be a safe relative path and
-/// unique within the archive, no entry may carry a `node_modules`
-/// component, every entry must be a regular file or an explicit
-/// directory entry, every entry must decompress to bytes that match its
-/// CRC-32 within the decompressed-size budgets, the archive must hold
+/// unique within the archive ignoring case, no entry may carry a
+/// `node_modules` component, every entry must be a regular file or an
+/// explicit directory entry, every entry must decompress to bytes that
+/// match its CRC-32 within the decompressed-size budgets, the archive
+/// must hold
 /// no more than the entry-count budget, the manifest must pass the
 /// same checks `pack` applies, and `dist/` must contain the manifest
 /// entrypoint. The archive path itself must be a regular file, so a

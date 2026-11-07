@@ -2,8 +2,9 @@
 //!
 //! The module owns every check the command runs on an archive: the
 //! archive path itself must be a regular file, every entry name must
-//! pass the shared archive rules and be unique, every entry must be a
-//! regular file or an explicit directory entry (`dist/`), every entry is
+//! pass the shared archive rules and be unique ignoring case, every
+//! entry must be a regular file or an explicit directory entry
+//! (`dist/`), every entry is
 //! read through so its data and CRC-32 are
 //! validated within the decompressed-size budgets, the archived
 //! `manifest.json` is validated with the rules the `pack` command
@@ -140,6 +141,10 @@ pub(super) fn inspect(source: &Path) -> Result<VerifyReport, Error> {
 /// payload this run validates could differ from the payload another
 /// consumer extracts under that name.
 ///
+/// Names that differ only by case are rejected as well, because an
+/// extractor on Windows or macOS writes both of them to one file. See
+/// [`folded_name`].
+///
 /// The returned index is the position of the `manifest.json` entry, so
 /// the manifest is later read from exactly that entry.
 fn collect_entry_names(
@@ -155,6 +160,7 @@ fn collect_entry_names(
     }
     let mut names: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut folded: BTreeSet<String> = BTreeSet::new();
     let mut manifest_index: Option<usize> = None;
     let mut total_bytes: u64 = 0;
     for index in 0..count {
@@ -180,6 +186,9 @@ fn collect_entry_names(
         if !seen.insert(name.clone()) {
             return Err(duplicate_entry(source));
         }
+        if !folded.insert(folded_name(&name)) {
+            return Err(duplicate_entry(source));
+        }
         validate_archive_entry(&name)?;
         validate_no_node_modules(Path::new(&name))?;
         if name == MANIFEST_FILE_NAME {
@@ -190,6 +199,21 @@ fn collect_entry_names(
         names.push(name);
     }
     return Ok((names, manifest_index));
+}
+
+/// Return the key used to detect entry names that collide on a file
+/// system that compares names without regard to case.
+///
+/// Windows (NTFS) and macOS (APFS) resolve `dist/app.ts` and
+/// `dist/App.ts` to one file, while this archive keeps both, so the
+/// payload this run validates can differ from the payload an extractor
+/// writes. The key uses the Unicode uppercase mapping, the direction
+/// those file systems fold in, so the ASCII collisions and the common
+/// Unicode ones are caught. It approximates their tables rather than
+/// copying them, which is why Section 6 of `docs/SPEC.md` states the
+/// rule as a portability requirement.
+fn folded_name(name: &str) -> String {
+    return name.to_uppercase();
 }
 
 /// Read the archived manifest and validate its bytes.
@@ -352,8 +376,9 @@ fn too_many_entries(source: &Path) -> Error {
 
 /// Build the error for an archive that lists one entry name twice.
 ///
-/// The byte-level check reports only that duplicates are present, not
-/// which name repeats, so both checks share this diagnostic, which
+/// The byte-level check, and the case-folded check that catches names
+/// differing only by case, report only that a collision is present and
+/// not which name collides, so the checks share this diagnostic, which
 /// names the archive instead.
 fn duplicate_entry(source: &Path) -> Error {
     return Error::ValidationError(format!(
