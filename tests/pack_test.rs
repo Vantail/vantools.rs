@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use tempfile::tempdir;
 use vantools::common::Error;
 use vantools::common::validation::{
-    validate_archive_entry, validate_no_node_modules,
+    escape_path, validate_archive_entry, validate_no_node_modules,
 };
 use vantools::pack::{PackCommand, PackReport};
 use zip::ZipArchive;
@@ -36,7 +36,7 @@ fn pack_rejects_missing_dist_directory() {
     let target = root.path().join("target");
     let error = pack_error(&source, &target);
     let expected =
-        format!("Missing 'dist' directory in source: {}", source.display());
+        format!("Missing 'dist' directory in source: {}", escape_path(&source));
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
 }
@@ -52,8 +52,10 @@ fn pack_rejects_missing_entrypoint() {
     let target = root.path().join("target");
     let error = pack_error(&source, &target);
     let entrypoint = dist.join("app.ts");
-    let expected =
-        format!("Entrypoint file not found in dist: {}", entrypoint.display());
+    let expected = format!(
+        "Entrypoint file not found in dist: {}",
+        escape_path(&entrypoint)
+    );
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
 }
@@ -189,7 +191,7 @@ fn pack_rejects_symlinks() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        link_path.display()
+        escape_path(&link_path)
     );
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
@@ -218,7 +220,7 @@ fn pack_rejects_symlinked_entrypoint() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        entrypoint.display()
+        escape_path(&entrypoint)
     );
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
@@ -243,7 +245,7 @@ fn pack_rejects_dangling_symlinked_entrypoint() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        entrypoint.display()
+        escape_path(&entrypoint)
     );
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
@@ -270,7 +272,7 @@ fn pack_refuses_to_overwrite_symlinked_archive() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Refusing to overwrite a symlink or non-regular file: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
     let content = fs::read(&victim);
@@ -300,7 +302,7 @@ fn pack_refuses_symlinked_target_directory() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        target.display()
+        escape_path(&target)
     );
     assert_validation_message(error, &expected);
     // The archive must not be written through the link.
@@ -325,7 +327,7 @@ fn pack_refuses_symlinked_source_directory() {
     let error = pack_error(&link_source, &target);
     let expected = format!(
         "Symlinks or non-regular files are not allowed: {}",
-        link_source.display()
+        escape_path(&link_source)
     );
     assert_validation_message(error, &expected);
     assert!(!target.join(BAD_ARCHIVE).exists());
@@ -343,7 +345,7 @@ fn pack_refuses_to_overwrite_directory_at_archive_path() {
     let error = pack_error(&source, &target);
     let expected = format!(
         "Refusing to overwrite a symlink or non-regular file: {}",
-        archive.display()
+        escape_path(&archive)
     );
     assert_validation_message(error, &expected);
 }
@@ -397,7 +399,7 @@ fn pack_failure_keeps_previous_archive_intact() {
         other => panic!("unexpected error: {other}"),
     };
     assert!(
-        message.contains(&format!("failed to read {}", locked.display())),
+        message.contains(&format!("failed to read {}", escape_path(&locked))),
         "unexpected error: {message}"
     );
     let content = fs::read(&archive);
