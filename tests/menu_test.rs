@@ -1,14 +1,6 @@
 //! Integration tests for the start-menu layout helpers.
-//!
-//! The menu belongs to the `van` binary, so the tests include its module
-//! directly instead of exporting the terminal layer from the library.
 
-// Only the layout helpers are exercised here.
-#[allow(dead_code)]
-#[path = "../src/cli/tui/menu.rs"]
-mod menu;
-
-use menu::{
+use vantools::tui::menu::{
     LOGO_ROWS, MIN_WIDTH, SLOGAN, build_frame, next_index, previous_index,
 };
 

@@ -15,7 +15,7 @@
 use std::cmp::Ordering;
 use std::path::Path;
 
-use vantools::common::validation::escape_path;
+use crate::common::validation::escape_path;
 
 /// Indentation prepended to every line of the tree.
 const TREE_INDENT: &str = "    ";

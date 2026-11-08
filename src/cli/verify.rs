@@ -4,11 +4,11 @@ use std::path::PathBuf;
 
 use vantools::common::Error;
 use vantools::common::cli::CliCommand;
+use vantools::tui::logo::print_logo;
+use vantools::tui::progress::show_progress;
 use vantools::verify::VerifyCommand;
 
 use super::parser;
-use super::tui::logo::print_logo;
-use super::tui::progress::show_progress;
 use super::verify_report::print_report;
 
 /// Name of the subcommand, used in its usage errors.

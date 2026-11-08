@@ -6,11 +6,11 @@ use vantools::common::Error;
 use vantools::common::cli::CliCommand;
 use vantools::common::validation::escape_path;
 use vantools::pack::{PackCommand, PackReport};
+use vantools::tui::log::{log_info, log_ok, log_warn};
+use vantools::tui::logo::print_logo;
+use vantools::tui::progress::show_progress;
 
 use super::parser;
-use super::tui::log::{log_info, log_ok, log_warn};
-use super::tui::logo::print_logo;
-use super::tui::progress::show_progress;
 
 /// Name of the subcommand, used in its usage errors.
 const COMMAND_NAME: &str = "pack";

@@ -2,9 +2,9 @@
 
 use std::process::ExitCode;
 
-use cli::tui::menu::MenuChoice;
 use vantools::common::cli::{collect_arguments, to_exit_code};
 use vantools::common::{Error, VanError};
+use vantools::tui::menu::MenuChoice;
 use vantools::van;
 
 mod cli;
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     // The rendered error already starts with `error: `, so it becomes
     // the log message rather than repeating that prefix as a value.
     let message = format!("{error}");
-    cli::tui::log::log_err(&message, "");
+    vantools::tui::log::log_err(&message, "");
     let code: i32 = error.exit_code();
     return ExitCode::from(to_exit_code(code));
 }
@@ -62,12 +62,15 @@ fn run() -> Result<(), Error> {
 /// The menu restores the terminal before it returns, so the help text
 /// is written to the normal screen.
 fn run_menu() -> Result<(), Error> {
-    let choice = cli::tui::menu::show_menu()?;
-    cli::tui::menu::clear_screen();
+    let choice = vantools::tui::menu::show_menu()?;
+    vantools::tui::menu::clear_screen();
     return match choice {
         MenuChoice::Quit => Ok(()),
         MenuChoice::Pack => cli::pack::print_pack_help(),
         MenuChoice::Verify => cli::verify::print_verify_help(),
         MenuChoice::Unpack => cli::unpack::print_unpack_help(),
+        // The library enum is non-exhaustive, so a variant added later
+        // must not break the binary; leaving the menu is the safe default.
+        _ => Ok(()),
     };
 }

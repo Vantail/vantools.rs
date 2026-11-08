@@ -14,6 +14,7 @@ use std::io;
 use std::io::IsTerminal;
 use std::io::Write;
 
+use crate::common::Error;
 use crossterm::cursor::MoveTo;
 use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
@@ -24,7 +25,6 @@ use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
     disable_raw_mode, enable_raw_mode, size,
 };
-use vantools::common::Error;
 
 /// The start menu wordmark, one entry per row.
 ///
