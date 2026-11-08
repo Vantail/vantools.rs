@@ -278,11 +278,16 @@ impl Drop for TerminalGuard {
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
 ///
-/// The crate version sits at the right edge of the slogan line, in
-/// italics, so the branding block always names the build it belongs to.
+/// The crate version sits directly below the logo, right-aligned to
+/// the logo's width in italics, and the slogan follows on the next
+/// line.
 pub fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
+    let mut max_width: usize = 0;
     for row in LOGO_ROWS {
+        if row.len() > max_width {
+            max_width = row.len();
+        }
         let mut color_index: usize = 0;
         for character in row.chars() {
             if character.is_whitespace() {
@@ -300,12 +305,8 @@ pub fn build_frame(selected: usize) -> String {
         }
         frame.push_str("\r\n");
     }
-    frame.push_str("\r\n");
     let version_text = format!("version: {}", env!("CARGO_PKG_VERSION"));
-    let line_width = usize::from(MIN_WIDTH) - 1;
-    let used = SLOGAN.len() + version_text.len();
-    let padding = line_width.saturating_sub(used);
-    frame.push_str(SLOGAN);
+    let padding = max_width.saturating_sub(version_text.len());
     let mut written: usize = 0;
     while written < padding {
         frame.push(' ');
@@ -314,6 +315,8 @@ pub fn build_frame(selected: usize) -> String {
     frame.push_str(ITALIC);
     frame.push_str(&version_text);
     frame.push_str(RESET);
+    frame.push_str("\r\n\r\n");
+    frame.push_str(SLOGAN);
     frame.push_str("\r\n\r\n");
     let mut index: usize = 0;
     while index < MENU_ENTRIES.len() {

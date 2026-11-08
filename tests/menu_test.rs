@@ -89,20 +89,55 @@ fn logo_is_colored_and_resets_after_each_glyph() {
 }
 
 #[test]
-fn frame_places_the_italic_version_on_the_slogan_line() {
+fn frame_places_the_version_under_the_logo() {
     let frame = build_frame(0);
     let label = format!("version: {}", env!("CARGO_PKG_VERSION"));
     let styled = format!("\x1b[3m{label}\x1b[0m");
-    let limit = usize::from(MIN_WIDTH) - 1;
-    let mut found = false;
+    let mut lines: Vec<&str> = Vec::new();
     for line in frame.lines() {
-        let visible = visible_text(line);
-        if !visible.contains(SLOGAN) {
-            continue;
-        }
-        assert!(line.contains(&styled), "version is not italic");
-        assert_eq!(visible.len(), limit, "version is not right-aligned");
-        found = true;
+        lines.push(line);
     }
-    assert!(found, "slogan line is missing");
+    let mut last_logo: Option<usize> = None;
+    let mut index: usize = 0;
+    while index < lines.len() {
+        let line = match lines.get(index) {
+            Some(value) => *value,
+            None => break,
+        };
+        let visible = visible_text(line);
+        let mut is_logo = false;
+        for row in LOGO_ROWS {
+            if visible.as_str() == row {
+                is_logo = true;
+            }
+        }
+        if is_logo {
+            last_logo = Some(index);
+        }
+        index += 1;
+    }
+    let logo_index = match last_logo {
+        Some(value) => value,
+        None => panic!("logo rows are missing"),
+    };
+    let version_index = logo_index + 1;
+    let version_line = match lines.get(version_index) {
+        Some(value) => *value,
+        None => panic!("version line is missing"),
+    };
+    assert!(version_line.contains(&styled), "version is not italic");
+    let mut max_width: usize = 0;
+    for row in LOGO_ROWS {
+        if row.len() > max_width {
+            max_width = row.len();
+        }
+    }
+    let visible = visible_text(version_line);
+    assert_eq!(visible.len(), max_width, "version is not right-aligned");
+    let slogan_index = version_index + 2;
+    let slogan_line = match lines.get(slogan_index) {
+        Some(value) => *value,
+        None => panic!("slogan line is missing"),
+    };
+    assert_eq!(visible_text(slogan_line), SLOGAN, "slogan is not below");
 }
