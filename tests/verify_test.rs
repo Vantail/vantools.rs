@@ -415,6 +415,58 @@ fn verify_rejects_archive_without_dist() {
 }
 
 #[test]
+fn verify_rejects_an_entry_outside_dist() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("hook.sh", "#!/bin/sh\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Entries outside 'dist/' are not allowed in the archive: hook.sh",
+    );
+}
+
+#[test]
+fn verify_rejects_an_entry_beside_dist() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist/app.ts", "// content\n"),
+        ("dist-extra/other.ts", "// other\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    let expected = concat!(
+        "Entries outside 'dist/' are not allowed in the archive: ",
+        "dist-extra/other.ts",
+    );
+    assert_validation_message(error, expected);
+}
+
+#[test]
+fn verify_rejects_a_file_entry_named_dist() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    let entries: [(&str, &str); 3] = [
+        ("manifest.json", SAMPLE_MANIFEST),
+        ("dist", "// placeholder\n"),
+        ("dist/app.ts", "// content\n"),
+    ];
+    write_archive(&archive, &entries);
+    let error = verify_error(&archive);
+    assert_validation_message(
+        error,
+        "Entries outside 'dist/' are not allowed in the archive: dist",
+    );
+}
+
+#[test]
 fn verify_rejects_archive_without_entrypoint() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -557,7 +609,7 @@ fn verify_cli_prints_a_tree_for_shared_directories() {
         ("manifest.json", SAMPLE_MANIFEST),
         ("dist/app.ts", "// content\n"),
         ("dist/sub/deep.ts", "// deep\n"),
-        ("dist-extra/other.ts", "// other\n"),
+        ("dist/subway/other.ts", "// other\n"),
     ];
     write_archive(&archive, &entries);
     let archive_path = match archive.to_str() {
@@ -571,10 +623,10 @@ fn verify_cli_prints_a_tree_for_shared_directories() {
         "    .\n",
         "    \u{251c}\u{2500}\u{2500} dist/\n",
         "    \u{2502}   \u{251c}\u{2500}\u{2500} app.ts\n",
-        "    \u{2502}   \u{2514}\u{2500}\u{2500} sub/\n",
-        "    \u{2502}       \u{2514}\u{2500}\u{2500} deep.ts\n",
-        "    \u{251c}\u{2500}\u{2500} dist-extra/\n",
-        "    \u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
+        "    \u{2502}   \u{251c}\u{2500}\u{2500} sub/\n",
+        "    \u{2502}   \u{2502}   \u{2514}\u{2500}\u{2500} deep.ts\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} subway/\n",
+        "    \u{2502}       \u{2514}\u{2500}\u{2500} other.ts\n",
         "    \u{2514}\u{2500}\u{2500} manifest.json\n",
     );
     assert!(stdout.contains(expected), "unexpected tree: {stdout}");
@@ -584,11 +636,12 @@ fn verify_cli_prints_a_tree_for_shared_directories() {
 fn verify_cli_reuses_a_directory_matching_an_entry_name() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
-    let entries: [(&str, &str); 4] = [
+    let entries: [(&str, &str); 5] = [
         ("manifest.json", SAMPLE_MANIFEST),
-        ("dist", "// placeholder\n"),
         ("dist/app.ts", "// content\n"),
-        ("dist-extra/other.ts", "// other\n"),
+        ("dist/other.ts", "// other\n"),
+        ("dist/src", "// placeholder\n"),
+        ("dist/src/app.ts", "// nested\n"),
     ];
     write_archive(&archive, &entries);
     let archive_path = match archive.to_str() {
@@ -601,9 +654,10 @@ fn verify_cli_reuses_a_directory_matching_an_entry_name() {
     let expected = concat!(
         "    .\n",
         "    \u{251c}\u{2500}\u{2500} dist/\n",
-        "    \u{2502}   \u{2514}\u{2500}\u{2500} app.ts\n",
-        "    \u{251c}\u{2500}\u{2500} dist-extra/\n",
-        "    \u{2502}   \u{2514}\u{2500}\u{2500} other.ts\n",
+        "    \u{2502}   \u{251c}\u{2500}\u{2500} app.ts\n",
+        "    \u{2502}   \u{251c}\u{2500}\u{2500} other.ts\n",
+        "    \u{2502}   \u{2514}\u{2500}\u{2500} src/\n",
+        "    \u{2502}       \u{2514}\u{2500}\u{2500} app.ts\n",
         "    \u{2514}\u{2500}\u{2500} manifest.json\n",
     );
     assert!(stdout.contains(expected), "unexpected tree: {stdout}");
