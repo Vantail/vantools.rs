@@ -332,13 +332,21 @@ fn tab_moves_the_highlight_to_the_target_field() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "src");
     let source_active = frame_of(&state);
-    assert!(source_active.contains("\x1b[1m\x1b[3m\x1b[32msrc\x1b[0m"));
-    assert!(!source_active.contains("\x1b[1m\x1b[3m\x1b[32mout\x1b[0m"));
+    assert!(source_active.contains("\x1b[1;3;32msrc\x1b[0m"));
+    assert!(!source_active.contains("\x1b[1;3;32mout\x1b[0m"));
+    assert!(
+        !source_active.contains("[\x1b[0msrc\x1b[0m]"),
+        "the active field is drawn in the inactive style"
+    );
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "out");
     let target_active = frame_of(&state);
-    assert!(!target_active.contains("\x1b[1m\x1b[3m\x1b[32msrc\x1b[0m"));
-    assert!(target_active.contains("\x1b[1m\x1b[3m\x1b[32mout\x1b[0m"));
+    assert!(!target_active.contains("\x1b[1;3;32msrc\x1b[0m"));
+    assert!(target_active.contains("\x1b[1;3;32mout\x1b[0m"));
+    assert!(
+        target_active.contains("[\x1b[0msrc\x1b[0m]"),
+        "the inactive field is not in the default style"
+    );
 }
 
 #[test]
@@ -347,7 +355,7 @@ fn tilde_input_keeps_the_brackets_and_the_style() {
     type_text(&mut state, "~/x");
     let (frame, cursor) = build_frame(&state);
     assert!(
-        frame.contains("[\x1b[1m\x1b[3m\x1b[32m~/x\x1b[0m]"),
+        frame.contains("[\x1b[1;3;32m~/x\x1b[0m]"),
         "tilde dropped the styling or a bracket: {frame}"
     );
     let visible = visible_text(&frame);

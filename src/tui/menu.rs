@@ -51,11 +51,13 @@ const ITALIC: &str = "\x1b[3m";
 /// ANSI SGR sequence that resets every attribute.
 const RESET: &str = "\x1b[0m";
 
-/// ANSI SGR sequence that turns text bold.
-const BOLD: &str = "\x1b[1m";
+/// Style of the form field that receives typed characters: bold,
+/// italic, and green.
+const ACTIVE_STYLE: &str = "\x1b[1;3;32m";
 
-/// ANSI SGR sequence that turns text green.
-const GREEN: &str = "\x1b[32m";
+/// Style of a form field that does not receive typed characters: the
+/// terminal's default attributes.
+const INACTIVE_STYLE: &str = "\x1b[0m";
 
 /// Rainbow palette the logo cycles through, left to right.
 const RAINBOW: [&str; 6] = [
@@ -797,17 +799,19 @@ fn form_line(state: &AppState) -> String {
     return line;
 }
 
-/// Render one buffer between uncolored brackets, styling it when active.
+/// Render one buffer between uncolored brackets in its field style.
 ///
-/// The brackets sit outside the style codes: the opening bracket is
-/// printed before the attributes and the closing bracket after the
-/// reset, so neither is ever colored or swallowed by a preceding
-/// sequence, whatever characters the buffer holds.
+/// Only the active field is bold italic green; the other field keeps the
+/// terminal's default attributes. The brackets sit outside the style
+/// codes: the opening bracket is printed before the attributes and the
+/// closing bracket after the reset, so neither is ever colored or
+/// swallowed by a preceding sequence, whatever the buffer holds.
 fn field_cell(active_field: usize, index: usize, buffer: &str) -> String {
-    if active_field == index {
-        return format!("[{BOLD}{ITALIC}{GREEN}{buffer}{RESET}]");
-    }
-    return format!("[{buffer}]");
+    let style = match active_field == index {
+        true => ACTIVE_STYLE,
+        false => INACTIVE_STYLE,
+    };
+    return format!("[{style}{buffer}{RESET}]");
 }
 
 /// Return the hint shown at the bottom of the current screen.
