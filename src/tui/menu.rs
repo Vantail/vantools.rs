@@ -15,7 +15,7 @@ use std::io::IsTerminal;
 use std::io::Write;
 
 use crate::common::Error;
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -213,7 +213,8 @@ fn is_interactive() -> bool {
 struct TerminalGuard;
 
 impl TerminalGuard {
-    /// Enter the alternate screen and switch the terminal to raw mode.
+    /// Enter the alternate screen, hide the cursor, and switch the
+    /// terminal to raw mode.
     fn acquire() -> Result<Self, Error> {
         if let Err(error) = enable_raw_mode() {
             let message = format!("failed to enable raw mode: {error}");
@@ -221,7 +222,7 @@ impl TerminalGuard {
         }
         let guard = TerminalGuard;
         let mut stdout = io::stdout();
-        let entered = execute!(stdout, EnterAlternateScreen);
+        let entered = execute!(stdout, Hide, EnterAlternateScreen);
         return match entered {
             Ok(()) => Ok(guard),
             Err(error) => {
@@ -239,7 +240,7 @@ impl Drop for TerminalGuard {
         // cannot report its own failure either.
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, Show, LeaveAlternateScreen);
         return;
     }
 }
