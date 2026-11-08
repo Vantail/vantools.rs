@@ -230,20 +230,32 @@ fn field_cell(state: &FormState, index: usize, buffer: &str) -> String {
     return String::from(buffer);
 }
 
+/// Return how many characters `text` holds.
+///
+/// Iterator adapters are not used in this crate, so the width is counted
+/// with an explicit loop instead of `chars().count()`.
+fn char_width(text: &str) -> usize {
+    let mut width: usize = 0;
+    for _character in text.chars() {
+        width += 1;
+    }
+    return width;
+}
+
 /// Return the zero-based column the cursor occupies in the form line.
 ///
 /// The column counts characters, not bytes, so a buffer with multi-byte
 /// characters still puts the cursor after the text it holds.
 pub fn cursor_column(state: &FormState) -> u16 {
-    let source_width = state.source().chars().count();
-    let mut column = SOURCE_PREFIX.len() + source_width;
+    let mut column = SOURCE_PREFIX.len() + char_width(state.source());
     if state.active_field() == TARGET_FIELD {
-        column += FIELD_SEPARATOR.len() + state.target().chars().count();
+        column += FIELD_SEPARATOR.len() + char_width(state.target());
     }
-    return match u16::try_from(column) {
-        Ok(value) => value,
-        Err(_) => u16::MAX,
-    };
+    let limit = usize::from(u16::MAX);
+    if column > limit {
+        return u16::MAX;
+    }
+    return column as u16;
 }
 
 /// Replace the screen with the current form line.

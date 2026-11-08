@@ -36,12 +36,6 @@ pub fn run_cli(args: &[String]) -> Result<(), Error> {
     };
 }
 
-/// Print the full help text of the `pack` command to stdout.
-pub(crate) fn print_pack_help() -> Result<(), Error> {
-    let metadata = PackCommand::new(PathBuf::new(), PathBuf::new());
-    return parser::print_help(metadata.help());
-}
-
 /// Run `pack` with the paths collected by the interactive form.
 ///
 /// The form only submits when both buffers are non-empty, so the values
