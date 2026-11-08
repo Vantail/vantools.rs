@@ -1,7 +1,7 @@
 //! Integration tests for the start-menu layout and state machine.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::Stylize;
+use crossterm::style::{Color, SetBackgroundColor, SetForegroundColor};
 use vantools::tui::menu::{
     AppState, LOGO_ROWS, MIN_WIDTH, MenuChoice, MenuSelection, SLOGAN,
     build_frame, handle_key, next_index, previous_index,
@@ -232,7 +232,7 @@ fn form_keeps_the_logo_and_the_menu_on_screen() {
     assert!(logo_rows > 0, "logo rows are missing");
     assert!(frame.contains(&separator()), "separator is missing");
     assert!(
-        frame.contains("van pack --source [src] --target [out]"),
+        frame.contains("van pack --source src --target out"),
         "form line is missing: {frame}"
     );
 }
@@ -287,7 +287,7 @@ fn cursor_sits_after_the_active_source_text() {
         None => panic!("form line is missing"),
     };
     let visible = visible_text(line);
-    let prefix = String::from("van pack --source [src");
+    let prefix = String::from("van pack --source src");
     assert!(visible.starts_with(&prefix));
     assert_eq!(usize::from(position.0), prefix.len());
 }
@@ -301,7 +301,7 @@ fn cursor_moves_with_typing_and_tab() {
         Some(value) => value,
         None => panic!("the form has no cursor"),
     };
-    assert_eq!(usize::from(source_position.0), 21);
+    assert_eq!(usize::from(source_position.0), 20);
     press(&mut state, KeyCode::Backspace);
     let (_, shorter_cursor) = build_frame(&state);
     let shorter_position = match shorter_cursor {
@@ -323,7 +323,7 @@ fn cursor_moves_with_typing_and_tab() {
         None => panic!("form line is missing"),
     };
     let visible = visible_text(line);
-    let prefix = String::from("van pack --source [s] --target [out");
+    let prefix = String::from("van pack --source s --target out");
     assert!(visible.starts_with(&prefix));
     assert_eq!(usize::from(target_position.0), prefix.len());
 }
@@ -333,61 +333,62 @@ fn tab_moves_the_highlight_to_the_target_field() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "src");
     let source_active = frame_of(&state);
-    let styled_src = format!("{}", "src".green().bold().italic());
+    let active_bg = format!("{}", SetBackgroundColor(Color::White));
+    let active_fg = format!("{}", SetForegroundColor(Color::Black));
+    let inactive_bg = format!("{}", SetBackgroundColor(Color::DarkGrey));
     assert!(
-        source_active.contains(&styled_src),
-        "source text is not green bold italic"
-    );
-    let active_open = format!("{}", "[".yellow().bold());
-    let active_close = format!("{}", "]".yellow().bold());
-    assert!(
-        source_active.contains(&active_open),
-        "active brackets are not distinguished"
+        source_active.contains(&active_bg),
+        "active field has no white background"
     );
     assert!(
-        source_active.contains(&active_close),
-        "active brackets are not distinguished"
+        source_active.contains(&active_fg),
+        "active field has no black text"
     );
     assert!(
-        visible_text(&source_active).contains("[src]"),
-        "a bracket is missing"
+        source_active.contains(&inactive_bg),
+        "inactive field has no dark grey background"
     );
+    let visible = visible_text(&source_active);
+    assert!(visible.contains("src"), "typed text is missing");
+    assert!(!visible.contains('['), "brackets were not removed");
+    assert!(!visible.contains(']'), "brackets were not removed");
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "out");
     let target_active = frame_of(&state);
-    let styled_out = format!("{}", "out".green().bold().italic());
     assert!(
-        target_active.contains(&styled_src),
-        "inactive source lost green bold italic"
+        target_active.contains(&active_bg),
+        "active field has no white background"
     );
     assert!(
-        target_active.contains(&styled_out),
-        "target text is not green bold italic"
+        target_active.contains(&inactive_bg),
+        "inactive field has no dark grey background"
     );
+    let visible = visible_text(&target_active);
     assert!(
-        visible_text(&target_active).contains("[src]"),
-        "a bracket is missing"
+        visible.contains("van pack --source src --target out"),
+        "form line is missing: {visible:?}"
     );
-    assert!(
-        visible_text(&target_active).contains("[out]"),
-        "a bracket is missing"
-    );
+    assert!(!visible.contains('['), "brackets were not removed");
+    assert!(!visible.contains(']'), "brackets were not removed");
 }
 
 #[test]
-fn tilde_input_keeps_the_brackets_and_the_style() {
+fn tilde_input_keeps_the_field_and_the_style() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "~/x");
     let (frame, cursor) = build_frame(&state);
-    let styled = format!("{}", "~/x".green().bold().italic());
-    assert!(frame.contains(&styled), "tilde dropped the styling: {frame}");
+    let active_bg = format!("{}", SetBackgroundColor(Color::White));
+    assert!(frame.contains(&active_bg), "tilde dropped the styling");
+    assert!(frame.contains("~/x"), "tilde text is missing: {frame}");
     let visible = visible_text(&frame);
-    assert!(visible.contains("[~/x]"), "a bracket is missing");
+    assert!(visible.contains("~/x"), "tilde text is missing");
+    assert!(!visible.contains('['), "brackets were not removed");
+    assert!(!visible.contains(']'), "brackets were not removed");
     let position = match cursor {
         Some(value) => value,
         None => panic!("the form has no cursor"),
     };
-    let expected = String::from("van pack --source [~/x").len();
+    let expected = String::from("van pack --source ~/x").len();
     assert_eq!(usize::from(position.0), expected);
 }
 
@@ -434,7 +435,7 @@ fn backspace_removes_the_last_typed_character() {
     press(&mut state, KeyCode::Backspace);
     let frame = visible_frame_of(&state);
     assert!(
-        frame.contains("van pack --source [ab] --target []"),
+        frame.contains("van pack --source ab --target"),
         "unexpected form line: {frame}"
     );
 }
@@ -483,7 +484,7 @@ fn verify_form_asks_only_for_a_source() {
     let mut state = AppState::verify_form();
     type_text(&mut state, "arch");
     let frame = visible_frame_of(&state);
-    assert!(frame.contains("van verify --source [arch]"));
+    assert!(frame.contains("van verify --source arch"));
     assert!(!frame.contains("--target"), "verify grew a target field");
     assert!(frame.contains(FORM_HINT));
     let finished = press(&mut state, KeyCode::Enter);
@@ -503,7 +504,7 @@ fn verify_form_keeps_its_only_field_active() {
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "b");
     let frame = visible_frame_of(&state);
-    assert!(frame.contains("van verify --source [ab]"));
+    assert!(frame.contains("van verify --source ab"));
 }
 
 #[test]

@@ -24,7 +24,9 @@ use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::queue;
-use crossterm::style::{Print, Stylize};
+use crossterm::style::{
+    Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor, Stylize,
+};
 use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
     disable_raw_mode, enable_raw_mode, size,
@@ -94,9 +96,6 @@ const FORM_SOURCE: &str = " --source ";
 
 /// Text before the target value in the form line.
 const FORM_TARGET: &str = " --target ";
-
-/// Text between the source value and the target value in the form line.
-const FIELD_GAP: &str = "] --target [";
 
 /// Index of the source field in a form.
 const SOURCE_FIELD: usize = 0;
@@ -773,11 +772,10 @@ fn separator_line() -> String {
 
 /// Render the editable command line of the current form.
 ///
-/// Both buffers are green bold italic through native `Stylize`, which
-/// respects the terminal palette. The brackets are pushed strictly
-/// outside the styled text so they stay visible whatever the buffer
-/// holds, including `~`. The active field keeps the same text style
-/// but uses yellow bold brackets so it stays distinguishable.
+/// The fields use background colors instead of brackets, so there is
+/// no fragile text formatted around the input. The active field uses a
+/// white background with black bold text and the inactive field uses a
+/// dark grey background with white text.
 fn form_line(state: &AppState) -> String {
     let (command, active_field, source, target) = match state {
         AppState::Form {
@@ -792,35 +790,41 @@ fn form_line(state: &AppState) -> String {
     line.push_str("van ");
     line.push_str(command_name(*command));
     line.push_str(FORM_SOURCE);
-    line.push_str(&field_cell(*active_field, SOURCE_FIELD, source));
+    line.push_str(&render_field(source, *active_field == SOURCE_FIELD));
     if field_count(*command) >= 2 {
         line.push_str(FORM_TARGET);
-        line.push_str(&field_cell(*active_field, TARGET_FIELD, target));
+        line.push_str(&render_field(target, *active_field == TARGET_FIELD));
     }
     return line;
 }
 
-/// Render one buffer with green bold italic text between brackets.
+/// Render one input field with a background color.
 ///
-/// The brackets are pushed outside the styled text: the opening bracket
-/// is printed before the style and the closing bracket after it, so
-/// neither is ever swallowed by a preceding sequence, whatever the
-/// buffer holds. The active field uses yellow bold brackets to stand
-/// out while both fields share the same text style.
-fn field_cell(active_field: usize, index: usize, buffer: &str) -> String {
-    let styled = format!("{}", buffer.green().bold().italic());
-    if active_field == index {
-        let mut cell = String::new();
-        cell.push_str(&format!("{}", "[".yellow().bold()));
-        cell.push_str(&styled);
-        cell.push_str(&format!("{}", "]".yellow().bold()));
-        return cell;
+/// The field is always at least one character wide: an empty buffer is
+/// shown as a single space so the background stays visible and the
+/// layout does not collapse. No brackets are used.
+fn render_field(text: &str, is_active: bool) -> String {
+    let display_text = if text.is_empty() {
+        " "
+    } else {
+        text
+    };
+    if is_active {
+        return format!(
+            "{}{}{}{}",
+            SetBackgroundColor(Color::White),
+            SetForegroundColor(Color::Black),
+            display_text.bold(),
+            ResetColor
+        );
     }
-    let mut cell = String::new();
-    cell.push('[');
-    cell.push_str(&styled);
-    cell.push(']');
-    return cell;
+    return format!(
+        "{}{}{}{}",
+        SetBackgroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::White),
+        display_text,
+        ResetColor
+    );
 }
 
 /// Return the hint shown at the bottom of the current screen.
@@ -836,7 +840,11 @@ fn hint_text(state: &AppState) -> &'static str {
 /// Return the column the cursor occupies inside the active field.
 ///
 /// The column counts characters, not bytes, so a buffer with multi-byte
-/// characters still puts the cursor after the text it holds.
+/// characters still puts the cursor after the text it holds. The fields
+/// have no brackets: the source starts after `"van <command> --source "`
+/// and the target starts after the visible source field plus
+/// `" --target "`. An empty field still shows one space, so its width
+/// counts as one when the target offset is computed.
 fn form_cursor_column(state: &AppState) -> u16 {
     let (command, active_field, source, target) = match state {
         AppState::Form {
@@ -848,10 +856,14 @@ fn form_cursor_column(state: &AppState) -> u16 {
         AppState::Menu(_) => return 0,
     };
     let mut column = "van ".len() + command_name(*command).len();
-    column += FORM_SOURCE.len() + 1;
+    column += FORM_SOURCE.len();
     column += char_width(source);
     if *active_field == TARGET_FIELD && field_count(*command) >= 2 {
-        column += FIELD_GAP.len() + char_width(target);
+        if source.is_empty() {
+            column += 1;
+        }
+        column += FORM_TARGET.len();
+        column += char_width(target);
     }
     let limit = usize::from(u16::MAX);
     if column > limit {
