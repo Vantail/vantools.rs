@@ -58,7 +58,7 @@ const RAINBOW: [&str; 6] = [
 ];
 
 /// Slogan shown below the wordmark.
-pub const SLOGAN: &str = "The van Plugin- and Packagemanager CLI.";
+pub const SLOGAN: &str = "The vantail package- and pluginmanger CLI";
 
 /// Hint line shown below the commands.
 const HINT: &str = "  ↑↓ Select | Enter Confirm | Q Quit";
