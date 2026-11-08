@@ -129,6 +129,16 @@ fn invalid_entrypoint_is_rejected() {
 }
 
 #[test]
+fn entrypoint_with_a_trailing_slash_is_rejected() {
+    let root = temp_root();
+    let content = "{\"name\":\"example-plugin\",\"version\":\"1.2.3\",\
+\"entrypoint\":\"app.ts/\"}";
+    write_file(&root.path().join("manifest.json"), content.as_bytes());
+    let message = manifest_message(root.path());
+    assert_eq!(message, "Invalid entrypoint path: app.ts/");
+}
+
+#[test]
 fn control_characters_in_entrypoint_are_rendered_as_escapes() {
     let root = temp_root();
     let content = "{\"name\":\"example-plugin\",\"version\":\"1.2.3\",\

@@ -431,6 +431,15 @@ fn verify_rejects_archive_without_entrypoint() {
 }
 
 #[test]
+fn verify_rejects_a_directory_entry_as_entrypoint() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_trailing_slash_entrypoint_archive(&archive);
+    let error = verify_error(&archive);
+    assert_validation_message(error, "Invalid entrypoint path: app.ts/");
+}
+
+#[test]
 fn verify_rejects_invalid_manifest() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -928,6 +937,42 @@ fn write_directory_entry_archive(path: &Path) {
     start_file(&mut writer, "dist/app.ts", regular);
     write_content(&mut writer, "// content\n");
     finish_archive(writer, path);
+}
+
+/// Write an archive whose manifest entrypoint ends with the directory
+/// marker, with no regular file at the entrypoint name.
+///
+/// The manifest validation rejects the marker, so a `dist/app.ts/`
+/// directory entry cannot be reported as carrying the entrypoint.
+fn write_trailing_slash_entrypoint_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let regular = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .system(System::Unix);
+    start_file(&mut writer, "manifest.json", regular);
+    write_content(
+        &mut writer,
+        "{\"name\":\"sample-plugin\",\"version\":\"0.1.0\",\
+\"entrypoint\":\"app.ts/\"}",
+    );
+    add_directory_entry(&mut writer, "dist", regular);
+    add_directory_entry(&mut writer, "dist/app.ts", regular);
+    finish_archive(writer, path);
+}
+
+/// Add one directory entry, failing the test when it cannot be added.
+fn add_directory_entry(
+    writer: &mut ZipWriter<fs::File>,
+    name: &str,
+    options: SimpleFileOptions,
+) {
+    let added = writer.add_directory(name, options);
+    match added {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to add the {name} directory entry: {error}");
+        }
+    }
 }
 
 /// Write an archive whose `dist/app.ts` entry declares a directory.
