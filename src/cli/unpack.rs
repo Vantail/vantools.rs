@@ -6,7 +6,6 @@ use vantools::common::Error;
 use vantools::common::cli::CliCommand;
 use vantools::common::validation::{escape_path, escape_text};
 use vantools::tui::log::{log_info, log_ok};
-use vantools::tui::logo::print_logo;
 use vantools::tui::progress::show_progress;
 use vantools::unpack::{UnpackCommand, UnpackReport};
 
@@ -46,8 +45,8 @@ pub(crate) fn print_unpack_help() -> Result<(), Error> {
 /// Resolve the required flags and run the `unpack` command.
 ///
 /// The source flag is reported as missing before the target flag, the
-/// order `pack` uses. The banner and the progress bar run after the
-/// flags were accepted, so the help and version output stays untouched.
+/// order `pack` uses. The progress bar runs after the flags were
+/// accepted, so the help and version output stays untouched.
 fn run_unpack_command(
     source: Option<PathBuf>,
     target: Option<PathBuf>,
@@ -61,7 +60,6 @@ fn run_unpack_command(
         None => return Err(parser::missing_arguments(COMMAND_NAME)),
     };
     let command = UnpackCommand::new(resolved_source, resolved_target);
-    print_logo();
     show_progress();
     let report = command.run()?;
     print_report(&report);

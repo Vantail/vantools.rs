@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use vantools::common::Error;
 use vantools::common::cli::CliCommand;
-use vantools::tui::logo::print_logo;
 use vantools::tui::progress::show_progress;
 use vantools::verify::VerifyCommand;
 
@@ -45,15 +44,14 @@ pub(crate) fn print_verify_help() -> Result<(), Error> {
 
 /// Resolve the required flag and run the `verify` command.
 ///
-/// The banner and the progress bar run after the flag was accepted, so
-/// the help and version output stays untouched.
+/// The progress bar runs after the flag was accepted, so the help and
+/// version output stays untouched.
 fn run_verify_command(source: Option<PathBuf>) -> Result<(), Error> {
     let resolved_source = match source {
         Some(value) => value,
         None => return Err(parser::missing_arguments(COMMAND_NAME)),
     };
     let command = VerifyCommand::new(resolved_source);
-    print_logo();
     show_progress();
     let mut report = command.run()?;
     return print_report(&mut report);

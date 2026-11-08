@@ -7,7 +7,6 @@ use vantools::common::cli::CliCommand;
 use vantools::common::validation::escape_path;
 use vantools::pack::{PackCommand, PackReport};
 use vantools::tui::log::{log_info, log_ok, log_warn};
-use vantools::tui::logo::print_logo;
 use vantools::tui::progress::show_progress;
 
 use super::parser;
@@ -46,9 +45,8 @@ pub(crate) fn print_pack_help() -> Result<(), Error> {
 /// Resolve the required flags and run the `pack` command.
 ///
 /// The source flag is reported as missing before the target flag, the
-/// same order the flat resolution used. The banner and the progress bar
-/// run after the flags were accepted, so the help and version output
-/// stays untouched.
+/// same order the flat resolution used. The progress bar runs after the
+/// flags were accepted, so the help and version output stays untouched.
 fn run_pack_command(
     source: Option<PathBuf>,
     target: Option<PathBuf>,
@@ -62,7 +60,6 @@ fn run_pack_command(
         None => return Err(parser::missing_arguments(COMMAND_NAME)),
     };
     let command = PackCommand::new(resolved_source, resolved_target.clone());
-    print_logo();
     show_progress();
     let report = command.run()?;
     print_report(&report, &resolved_target);
