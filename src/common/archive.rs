@@ -39,7 +39,8 @@ use zip::read::ZipFile;
 use crate::common::Error;
 use crate::common::manifest::{MAX_MANIFEST_BYTES, Manifest};
 use crate::common::validation::{
-    escape_path, escape_text, validate_archive_entry, validate_no_node_modules,
+    escape_path, escape_text, open_validated_file, validate_archive_entry,
+    validate_no_node_modules,
 };
 
 /// Mask that selects the file-type bits of a Unix mode.
@@ -160,7 +161,10 @@ pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
 /// Open the archive at `source` for reading.
 ///
 /// The path must be a regular file, so a symbolic link, a FIFO, or a
-/// device is refused before it is opened. The declared entry count is
+/// device is refused before it is opened, and the archive is opened
+/// through [`open_validated_file`], so the handle is compared with the
+/// entry that passed that check and a path replaced in between is
+/// refused. The declared entry count is
 /// checked before the archive is parsed, so a crafted central directory
 /// cannot make the ZIP reader allocate memory for an excessive number
 /// of entries. The handle must be inspected with [`inspect_archive`]
@@ -175,15 +179,7 @@ pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
 /// and [`Error::Runtime`] when the archive cannot be opened or parsed.
 pub(crate) fn open(source: &Path) -> Result<ZipArchive<File>, Error> {
     require_regular_source(source)?;
-    let file = match File::open(source) {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(Error::Runtime(format!(
-                "failed to open archive {}: {error}",
-                escape_path(source)
-            )));
-        }
-    };
+    let file = open_validated_file(source)?;
     require_declared_entry_count(&file, source)?;
     let opened = ZipArchive::new(file);
     return match opened {
@@ -376,8 +372,8 @@ fn read_manifest(
 /// link is seen as a link instead of being followed. The check runs
 /// before the path is opened, because a FIFO blocks the open until a
 /// writer appears and a device can block or return unbounded data.
-/// A missing path is left to [`File::open`], which reports it as a
-/// failed open like any other unreadable archive.
+/// A missing path is reported as a failed open, so the diagnostic
+/// names the archive the user asked for instead of the internal check.
 ///
 /// # Errors
 ///
@@ -390,7 +386,10 @@ fn require_regular_source(path: &Path) -> Result<(), Error> {
         Ok(value) => value,
         Err(error) => {
             if error.kind() == io::ErrorKind::NotFound {
-                return Ok(());
+                return Err(Error::Runtime(format!(
+                    "failed to open archive {}: {error}",
+                    escape_path(path)
+                )));
             }
             return Err(Error::Runtime(format!(
                 "failed to inspect {}: {error}",

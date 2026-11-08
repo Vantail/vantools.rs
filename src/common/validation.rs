@@ -291,7 +291,7 @@ pub fn open_validated_file(path: &Path) -> Result<File, Error> {
     };
     if !is_same_validated_file(&identity, &file, path)? {
         return Err(Error::ValidationError(format!(
-            "Source file changed or was replaced while packing: {}",
+            "File changed or was replaced after validation: {}",
             escape_path(path)
         )));
     }
