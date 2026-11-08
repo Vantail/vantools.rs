@@ -41,6 +41,19 @@ pub const LOGO_ROWS: [&str; 8] = [
     "                                         ",
 ];
 
+/// ANSI SGR sequence that resets every attribute.
+const RESET: &str = "\x1b[0m";
+
+/// Rainbow palette the logo cycles through, left to right.
+const RAINBOW: [&str; 6] = [
+    "\x1b[31m", // Red
+    "\x1b[33m", // Yellow
+    "\x1b[32m", // Green
+    "\x1b[36m", // Cyan
+    "\x1b[34m", // Blue
+    "\x1b[35m", // Magenta
+];
+
 /// Slogan shown below the wordmark.
 pub const SLOGAN: &str = "The van Plugin- and Packagemanager CLI.";
 
@@ -252,13 +265,33 @@ impl Drop for TerminalGuard {
 
 /// Render the whole menu for the given selection.
 ///
+/// The logo is drawn as a horizontal rainbow gradient: each
+/// non-whitespace character takes the next palette color and is
+/// followed by a reset, so the color cannot bleed into the rest of the
+/// frame. Whitespace keeps the layout uncolored and does not advance
+/// the gradient.
+///
 /// Every line ends with CR LF. Raw mode turns off the terminal's output
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
 pub fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
     for row in LOGO_ROWS {
-        frame.push_str(row);
+        let mut color_index: usize = 0;
+        for character in row.chars() {
+            if character.is_whitespace() {
+                frame.push(character);
+                continue;
+            }
+            let color = match RAINBOW.get(color_index % RAINBOW.len()) {
+                Some(value) => *value,
+                None => RESET,
+            };
+            frame.push_str(color);
+            frame.push(character);
+            frame.push_str(RESET);
+            color_index += 1;
+        }
         frame.push_str("\r\n");
     }
     frame.push_str("\r\n");
