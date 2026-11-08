@@ -266,6 +266,37 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Return how many logo rows carry visible glyphs.
+///
+/// The wordmark constant ends with padding rows that hold only spaces.
+/// Drawing them would leave blank lines between the artwork and the
+/// version, so the frame stops at the last row with a glyph.
+fn visible_logo_row_count() -> usize {
+    let mut count: usize = LOGO_ROWS.len();
+    while count > 0 {
+        let index = count - 1;
+        let row = match LOGO_ROWS.get(index) {
+            Some(value) => *value,
+            None => return count,
+        };
+        if row_has_glyph(row) {
+            return count;
+        }
+        count = index;
+    }
+    return 0;
+}
+
+/// Report whether `row` holds anything other than whitespace.
+fn row_has_glyph(row: &str) -> bool {
+    for character in row.chars() {
+        if !character.is_whitespace() {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Render the whole menu for the given selection.
 ///
 /// The logo is drawn as a horizontal rainbow gradient: each
@@ -278,13 +309,20 @@ impl Drop for TerminalGuard {
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
 ///
-/// The crate version sits directly below the logo, right-aligned to
-/// the logo's width in italics, and the slogan follows on the next
-/// line.
+/// The crate version sits directly below the wordmark, with no blank
+/// line between them: the trailing all-space logo rows are not drawn.
+/// It is right-aligned to the logo's width in italics, and the slogan
+/// follows on the next line.
 pub fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
     let mut max_width: usize = 0;
-    for row in LOGO_ROWS {
+    let row_count = visible_logo_row_count();
+    let mut row_index: usize = 0;
+    while row_index < row_count {
+        let row = match LOGO_ROWS.get(row_index) {
+            Some(value) => *value,
+            None => break,
+        };
         if row.len() > max_width {
             max_width = row.len();
         }
@@ -304,6 +342,7 @@ pub fn build_frame(selected: usize) -> String {
             color_index += 1;
         }
         frame.push_str("\r\n");
+        row_index += 1;
     }
     let version_text = format!("version: {}", env!("CARGO_PKG_VERSION"));
     let padding = max_width.saturating_sub(version_text.len());

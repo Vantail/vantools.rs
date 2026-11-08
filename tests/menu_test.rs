@@ -76,6 +76,15 @@ fn frame_marks_only_the_selected_entry() {
     assert!(!frame.contains("> Pack"));
     assert!(frame.contains(SLOGAN));
     for row in LOGO_ROWS {
+        let mut has_glyph = false;
+        for character in row.chars() {
+            if !character.is_whitespace() {
+                has_glyph = true;
+            }
+        }
+        if !has_glyph {
+            continue;
+        }
         assert!(frame.contains(row), "logo row is missing: {row:?}");
     }
 }
@@ -107,7 +116,13 @@ fn frame_places_the_version_under_the_logo() {
         let visible = visible_text(line);
         let mut is_logo = false;
         for row in LOGO_ROWS {
-            if visible.as_str() == row {
+            let mut has_glyph = false;
+            for character in row.chars() {
+                if !character.is_whitespace() {
+                    has_glyph = true;
+                }
+            }
+            if has_glyph && visible.as_str() == row {
                 is_logo = true;
             }
         }
