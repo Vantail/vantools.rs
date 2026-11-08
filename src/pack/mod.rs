@@ -127,21 +127,27 @@ impl PackCommand {
     ///
     /// A symlink at the target path is refused instead of followed, so
     /// the archive cannot land in a directory other than the one the
-    /// command named. The returned flag records whether the directory had
-    /// to be created, so the caller can name its path in the report.
+    /// command named. `create_dir_all` resolves links, so the created
+    /// entry is inspected again and a link planted in between is refused
+    /// too. The returned flag records whether the directory had to be
+    /// created, so the caller can name its path in the report.
     fn ensure_target(&self) -> Result<bool, Error> {
         refuse_symlink(&self.target)?;
         if self.target.is_dir() {
             return Ok(false);
         }
         let created = fs::create_dir_all(&self.target);
-        return match created {
-            Ok(()) => Ok(true),
-            Err(error) => Err(Error::Runtime(format!(
-                "failed to create target directory {}: {error}",
-                escape_path(&self.target)
-            ))),
-        };
+        match created {
+            Ok(()) => {}
+            Err(error) => {
+                return Err(Error::Runtime(format!(
+                    "failed to create target directory {}: {error}",
+                    escape_path(&self.target)
+                )));
+            }
+        }
+        require_created_directory(&self.target)?;
+        return Ok(true);
     }
 
     /// Validate the source layout and return the `dist` directory.
@@ -213,6 +219,38 @@ impl PackCommand {
             overwrote_existing,
         });
     }
+}
+
+/// Refuse a target that is not a real directory after it was created.
+///
+/// `fs::create_dir_all` resolves symbolic links, so a link planted after
+/// [`refuse_symlink`] inspected the path is followed and the creation
+/// succeeds through it. Inspecting the entry itself again, without
+/// following links, refuses that link instead of letting the archive be
+/// written through it.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] for a symbolic link or any other
+/// non-directory entry, and [`Error::Runtime`] when the path cannot be
+/// inspected.
+fn require_created_directory(path: &Path) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path);
+    return match metadata {
+        Ok(value) => {
+            if value.file_type().is_dir() {
+                return Ok(());
+            }
+            Err(Error::ValidationError(format!(
+                "Symlinks or non-regular files are not allowed: {}",
+                escape_path(path)
+            )))
+        }
+        Err(error) => Err(Error::Runtime(format!(
+            "failed to inspect {}: {error}",
+            escape_path(path)
+        ))),
+    };
 }
 
 impl CliCommand for PackCommand {
@@ -298,4 +336,114 @@ fn archive_name_of(prefix: &str, relative: &Path) -> Result<String, Error> {
         name.push_str(part);
     }
     return Ok(name);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+    use tempfile::tempdir;
+
+    use super::require_created_directory;
+    use crate::common::Error;
+    use crate::common::validation::escape_path;
+
+    /// Create a temporary directory for one test.
+    fn temp_root() -> TempDir {
+        let created = tempdir();
+        return match created {
+            Ok(value) => value,
+            Err(error) => {
+                panic!("failed to create a temporary directory: {error}");
+            }
+        };
+    }
+
+    /// Assert that a path was refused as a validation error.
+    fn assert_refused(error: Result<(), Error>, expected: &str) {
+        match error {
+            Ok(()) => panic!("expected the path to be refused"),
+            Err(Error::ValidationError(message)) => {
+                assert_eq!(message, expected);
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn created_directory_accepts_a_real_directory() {
+        let root = temp_root();
+        let directory = root.path().join("target");
+        let created = fs::create_dir(&directory);
+        match created {
+            Ok(()) => {}
+            Err(error) => {
+                panic!("failed to create {}: {error}", directory.display());
+            }
+        }
+        assert!(require_created_directory(&directory).is_ok());
+    }
+
+    #[test]
+    fn created_directory_refuses_a_regular_file() {
+        let root = temp_root();
+        let file = root.path().join("target");
+        let written = fs::write(&file, "not a directory\n");
+        match written {
+            Ok(()) => {}
+            Err(error) => {
+                panic!("failed to write {}: {error}", file.display());
+            }
+        }
+        let expected = format!(
+            "Symlinks or non-regular files are not allowed: {}",
+            escape_path(&file)
+        );
+        assert_refused(require_created_directory(&file), &expected);
+    }
+
+    #[test]
+    fn created_directory_reports_a_missing_path() {
+        let root = temp_root();
+        let missing = root.path().join("target");
+        match require_created_directory(&missing) {
+            Ok(()) => panic!("expected the missing path to be refused"),
+            Err(Error::Runtime(message)) => {
+                let rendered = escape_path(&missing);
+                let expected = format!("failed to inspect {rendered}");
+                assert!(message.contains(&expected), "unexpected: {message}");
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn created_directory_refuses_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        let real = root.path().join("real");
+        let created = fs::create_dir(&real);
+        match created {
+            Ok(()) => {}
+            Err(error) => {
+                panic!("failed to create {}: {error}", real.display());
+            }
+        }
+        let link = root.path().join("target");
+        let linked = symlink(&real, &link);
+        match linked {
+            Ok(()) => {}
+            Err(error) => {
+                panic!("failed to create {}: {error}", link.display());
+            }
+        }
+        let expected = format!(
+            "Symlinks or non-regular files are not allowed: {}",
+            escape_path(&link)
+        );
+        assert_refused(require_created_directory(&link), &expected);
+    }
 }

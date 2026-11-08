@@ -108,7 +108,9 @@ impl UnpackCommand {
 /// An existing entry at the path is refused unless it is a real
 /// directory, so a symbolic link or a file is reported instead of being
 /// followed or replaced. Only a missing path is created, matching the
-/// no-symlink policy `pack` applies to its target.
+/// no-symlink policy `pack` applies to its target. The created entry is
+/// inspected again, because `fs::create_dir_all` resolves a link planted
+/// after the first inspection.
 ///
 /// # Errors
 ///
@@ -118,20 +120,25 @@ impl UnpackCommand {
 fn ensure_directory(path: &Path) -> Result<(), Error> {
     refuse_non_directory(path)?;
     let created = fs::create_dir_all(path);
-    return match created {
-        Ok(()) => Ok(()),
-        Err(error) => Err(Error::Runtime(format!(
-            "failed to create target directory {}: {error}",
-            escape_path(path)
-        ))),
-    };
+    match created {
+        Ok(()) => {}
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to create target directory {}: {error}",
+                escape_path(path)
+            )));
+        }
+    }
+    return refuse_non_directory(path);
 }
 
 /// Refuse a path that exists as anything other than a real directory.
 ///
 /// The path is inspected with [`fs::symlink_metadata`], so a symbolic
 /// link is seen as a link, whether or not its target exists. A missing
-/// path passes through, so the caller can create it.
+/// path passes through, so the caller can create it. The caller inspects
+/// again after creation, so the rule also covers a link planted while
+/// `fs::create_dir_all` runs.
 ///
 /// # Errors
 ///
