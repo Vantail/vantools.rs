@@ -17,7 +17,7 @@ use std::io::Write;
 use crate::common::Error;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::queue;
 use crossterm::style::{Print, Stylize};
@@ -149,6 +149,11 @@ pub fn show_menu() -> Result<MenuChoice, Error> {
             KeyCode::Up => previous_index(selected),
             KeyCode::Down => next_index(selected),
             KeyCode::Enter => return Ok(choice_at(selected)),
+            KeyCode::Char('c')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                return Ok(MenuChoice::Quit);
+            }
             KeyCode::Char('q') => return Ok(MenuChoice::Quit),
             KeyCode::Esc => return Ok(MenuChoice::Quit),
             _ => selected,
