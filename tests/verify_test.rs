@@ -440,6 +440,42 @@ fn verify_rejects_a_directory_entry_as_entrypoint() {
 }
 
 #[test]
+fn verify_rejects_a_declared_entry_count_before_parsing() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_declared_count_file(&archive, 5000);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Archive has more than 4096 entries: {}",
+        escape_path(&archive)
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_rejects_a_declared_entry_count_with_trailing_bytes() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_many_entries_archive(&archive);
+    append_bytes(&archive, &[0u8; 100]);
+    let error = verify_error(&archive);
+    let expected = format!(
+        "Archive has more than 4096 entries: {}",
+        escape_path(&archive)
+    );
+    assert_validation_message(error, &expected);
+}
+
+#[test]
+fn verify_ignores_an_eocd_signature_in_the_archive_comment() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_commented_archive(&archive);
+    let report = verify_report(&archive);
+    assert_eq!(report.manifest.entrypoint, "app.ts");
+}
+
+#[test]
 fn verify_rejects_invalid_manifest() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);
@@ -730,6 +766,67 @@ fn write_many_entries_archive(path: &Path) {
         start_file(&mut writer, &name, options);
         write_content(&mut writer, "// content\n");
         index += 1;
+    }
+    finish_archive(writer, path);
+}
+
+/// Write a file that holds only an end-of-central-directory record
+/// declaring `count` entries.
+///
+/// The record carries the declared count that the budget check reads
+/// before any central directory is parsed, so a file without one is
+/// rejected for its count rather than for its missing directory.
+fn write_declared_count_file(path: &Path, count: u16) {
+    let mut record: Vec<u8> = Vec::new();
+    record.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+    record.extend_from_slice(&0u16.to_le_bytes());
+    record.extend_from_slice(&0u16.to_le_bytes());
+    record.extend_from_slice(&count.to_le_bytes());
+    record.extend_from_slice(&count.to_le_bytes());
+    record.extend_from_slice(&0u32.to_le_bytes());
+    record.extend_from_slice(&0u32.to_le_bytes());
+    record.extend_from_slice(&0u16.to_le_bytes());
+    let written = fs::write(path, &record);
+    match written {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to write {}: {error}", path.display());
+        }
+    }
+}
+
+/// Append raw bytes to an existing file.
+fn append_bytes(path: &Path, bytes: &[u8]) {
+    let opened = fs::OpenOptions::new().append(true).open(path);
+    let mut file = match opened {
+        Ok(value) => value,
+        Err(error) => panic!("failed to open {}: {error}", path.display()),
+    };
+    let written = file.write_all(bytes);
+    match written {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to append to {}: {error}", path.display());
+        }
+    }
+}
+
+/// Write a minimal archive whose comment contains the
+/// end-of-central-directory signature.
+fn write_commented_archive(path: &Path) {
+    let mut writer = create_writer(path);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+    start_file(&mut writer, "manifest.json", options);
+    write_content(&mut writer, SAMPLE_MANIFEST);
+    start_file(&mut writer, "dist/app.ts", options);
+    write_content(&mut writer, "// content\n");
+    // The signature inside the comment must not be mistaken for the
+    // record, which sits 22 bytes before the comment.
+    let commented = writer.set_comment("note PK\u{5}\u{6} markers");
+    match commented {
+        Ok(()) => {}
+        Err(error) => panic!("failed to set the archive comment: {error}"),
     }
     finish_archive(writer, path);
 }

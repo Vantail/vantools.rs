@@ -17,12 +17,19 @@
 //! The archive path is checked before it is opened, because opening a
 //! FIFO blocks until a writer appears and a device can block or return
 //! unbounded data.
+//!
+//! The declared entry count is read from the end-of-central-directory
+//! record and checked before the archive is parsed, so a crafted
+//! central directory cannot make the ZIP reader allocate memory for an
+//! excessive number of entries.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::path::Path;
 
 use zip::ZipArchive;
@@ -70,7 +77,10 @@ const MAX_TOTAL_BYTES: u64 = 256 * MEBIBYTE;
 ///
 /// Every entry name is validated and kept for the report, so the count
 /// bounds the memory a crafted central directory can make a run
-/// allocate. The limit stays far above any plausible plugin payload.
+/// allocate. The declared count is read from the
+/// end-of-central-directory record and checked before the archive is
+/// parsed, so the budget applies before the reader allocates per-entry
+/// data. The limit stays far above any plausible plugin payload.
 const MAX_ENTRY_COUNT: usize = 4096;
 
 /// Largest archive entry name accepted, in bytes.
@@ -83,6 +93,29 @@ const MAX_ENTRY_COUNT: usize = 4096;
 /// name component and bounds the bookkeeping together with
 /// [`MAX_ENTRY_COUNT`].
 const MAX_ENTRY_NAME_BYTES: usize = 255;
+
+/// Largest distance of the end-of-central-directory record from the end
+/// of the file, in bytes.
+///
+/// The record is 22 bytes and carries an optional archive comment of at
+/// most 65,535 bytes, so the signature always starts within this window
+/// of the end of the file.
+const EOCD_SEARCH_BYTES: u64 = 22 + 65_535;
+
+/// Signature of the end-of-central-directory record (`PK\x05\x06`).
+const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+
+/// Length of the end-of-central-directory record without a comment, in
+/// bytes.
+const EOCD_RECORD_BYTES: usize = 22;
+
+/// Offset of the declared total entry count in the
+/// end-of-central-directory record, in bytes.
+const EOCD_ENTRY_COUNT_OFFSET: usize = 10;
+
+/// Offset of the declared archive comment length in the
+/// end-of-central-directory record, in bytes.
+const EOCD_COMMENT_LENGTH_OFFSET: usize = 20;
 
 /// Name of the manifest file expected at the archive root.
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -126,16 +159,19 @@ pub fn inspect(source: &Path) -> Result<ArchiveContents, Error> {
 /// Open the archive at `source` for reading.
 ///
 /// The path must be a regular file, so a symbolic link, a FIFO, or a
-/// device is refused before it is opened. The handle must be inspected
-/// with [`inspect_archive`] before any entry is used, and a caller that
-/// also extracts entries must extract through this same handle: a path
-/// replaced after inspection could otherwise supply different bytes to
-/// the extraction than the ones that were validated.
+/// device is refused before it is opened. The declared entry count is
+/// checked before the archive is parsed, so a crafted central directory
+/// cannot make the ZIP reader allocate memory for an excessive number
+/// of entries. The handle must be inspected with [`inspect_archive`]
+/// before any entry is used, and a caller that also extracts entries
+/// must extract through this same handle: a path replaced after
+/// inspection could otherwise supply different bytes to the extraction
+/// than the ones that were validated.
 ///
 /// # Errors
 ///
-/// Returns the errors of the path check, and [`Error::Runtime`] when
-/// the archive cannot be opened or parsed.
+/// Returns the errors of the path check and the declared-count check,
+/// and [`Error::Runtime`] when the archive cannot be opened or parsed.
 pub(crate) fn open(source: &Path) -> Result<ZipArchive<File>, Error> {
     require_regular_source(source)?;
     let file = match File::open(source) {
@@ -147,6 +183,7 @@ pub(crate) fn open(source: &Path) -> Result<ZipArchive<File>, Error> {
             )));
         }
     };
+    require_declared_entry_count(&file, source)?;
     let opened = ZipArchive::new(file);
     return match opened {
         Ok(value) => Ok(value),
@@ -192,7 +229,9 @@ pub(crate) fn inspect_archive(
 ///
 /// The entry count is checked before any entry is read, so an archive
 /// holding an excessive number of entries is rejected without
-/// allocating a name per entry.
+/// allocating a name per entry. [`require_declared_entry_count`]
+/// applies the same budget to the count the record declares before the
+/// archive is parsed, so this check is the second line of defence.
 ///
 /// Entry names must be unique, as Section 6 of `docs/SPEC.md` requires.
 /// Byte-identical duplicates are rejected before any entry is read, and
@@ -365,6 +404,150 @@ fn require_regular_source(path: &Path) -> Result<(), Error> {
         "Symlinks or non-regular files are not allowed: {}",
         escape_path(path)
     )));
+}
+
+/// Return an error when the archive declares more entries than the
+/// budget allows, before its central directory is parsed.
+///
+/// Constructing the ZIP reader allocates memory for every declared
+/// entry, so a count check that runs on the parsed archive cannot bound
+/// that allocation. The count is therefore read from the
+/// end-of-central-directory record first, and the check in
+/// [`collect_entry_names`] stays as the second line of defence.
+///
+/// The record is located by scanning backwards over the last
+/// [`EOCD_SEARCH_BYTES`] bytes for its signature. A candidate is
+/// accepted only when its declared comment length fits in the scanned
+/// bytes, so a signature inside compressed data or inside a comment is
+/// not mistaken for the record. When no record is found, the archive is
+/// left to the ZIP reader, which reports its own error.
+///
+/// A declared count of `0xFFFF` is the marker for a ZIP64 record, and
+/// writers use it only when the real count does not fit the classic
+/// field, so it is above the budget for the same reason.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the record declares more
+/// than [`MAX_ENTRY_COUNT`] entries, and [`Error::Runtime`] when the
+/// file cannot be read.
+fn require_declared_entry_count(
+    file: &File,
+    source: &Path,
+) -> Result<(), Error> {
+    let metadata = match file.metadata() {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to inspect {}: {error}",
+                escape_path(source)
+            )));
+        }
+    };
+    let size = metadata.len();
+    if size < EOCD_RECORD_BYTES as u64 {
+        return Ok(());
+    }
+    let window = size.min(EOCD_SEARCH_BYTES);
+    let start = size - window;
+    let tail = read_tail(file, start, window as usize, source)?;
+    let record = match find_end_of_central_directory(&tail) {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+    let declared = read_u16(&tail, record + EOCD_ENTRY_COUNT_OFFSET);
+    let count = match declared {
+        Some(value) => usize::from(value),
+        None => return Ok(()),
+    };
+    if count > MAX_ENTRY_COUNT {
+        return Err(too_many_entries(source));
+    }
+    return Ok(());
+}
+
+/// Return the offset of the end-of-central-directory record in `tail`.
+///
+/// The search runs backwards so the record that ends the archive is
+/// found before anything an archive comment contains. A candidate whose
+/// declared comment length does not fit is skipped.
+fn find_end_of_central_directory(tail: &[u8]) -> Option<usize> {
+    let mut offset = tail.len();
+    while offset > 0 {
+        offset -= 1;
+        if has_signature(tail, offset, &EOCD_SIGNATURE)
+            && comment_fits(tail, offset)
+        {
+            return Some(offset);
+        }
+    }
+    return None;
+}
+
+/// Return true when the record at `record` declares a comment that fits
+/// in `tail`.
+fn comment_fits(tail: &[u8], record: usize) -> bool {
+    let declared = read_u16(tail, record + EOCD_COMMENT_LENGTH_OFFSET);
+    let length = match declared {
+        Some(value) => usize::from(value),
+        None => return false,
+    };
+    let end = record + EOCD_RECORD_BYTES + length;
+    return end <= tail.len();
+}
+
+/// Return true when `bytes` holds `signature` at `offset`.
+fn has_signature(bytes: &[u8], offset: usize, signature: &[u8; 4]) -> bool {
+    let end = offset.saturating_add(signature.len());
+    let found = bytes.get(offset..end);
+    return found == Some(signature.as_slice());
+}
+
+/// Read a little-endian `u16` at `offset`, or `None` when it does not
+/// fit in `bytes`.
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let end = offset.checked_add(2)?;
+    let field = bytes.get(offset..end)?;
+    let mut array = [0u8; 2];
+    array.copy_from_slice(field);
+    return Some(u16::from_le_bytes(array));
+}
+
+/// Read up to `length` bytes of `file` starting at `start`.
+///
+/// # Errors
+///
+/// Returns [`Error::Runtime`] when the file cannot be read.
+fn read_tail(
+    file: &File,
+    start: u64,
+    length: usize,
+    source: &Path,
+) -> Result<Vec<u8>, Error> {
+    let mut reader: &File = file;
+    let seeked = reader.seek(SeekFrom::Start(start));
+    match seeked {
+        Ok(_) => {}
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read archive {}: {error}",
+                escape_path(source)
+            )));
+        }
+    }
+    let mut limited = reader.take(length as u64);
+    let mut bytes: Vec<u8> = Vec::new();
+    let read = limited.read_to_end(&mut bytes);
+    match read {
+        Ok(_) => {}
+        Err(error) => {
+            return Err(Error::Runtime(format!(
+                "failed to read archive {}: {error}",
+                escape_path(source)
+            )));
+        }
+    }
+    return Ok(bytes);
 }
 
 /// Read one entry to the end so its data and checksum are validated.
