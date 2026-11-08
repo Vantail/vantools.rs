@@ -72,6 +72,31 @@ fn unpack_rejects_path_traversal_without_touching_the_target() {
 }
 
 #[test]
+fn unpack_rejects_an_entry_outside_dist() {
+    let root = temp_root();
+    let archive = root.path().join(SAMPLE_ARCHIVE);
+    write_archive(
+        &archive,
+        &[
+            ("manifest.json", SAMPLE_MANIFEST),
+            ("dist/app.ts", "// content\n"),
+            ("hook.sh", "#!/bin/sh\n"),
+        ],
+    );
+    let target = root.path().join("out");
+    let error = unpack_error(&archive, &target);
+    assert_validation_message(
+        error,
+        "Entries outside 'dist/' are not allowed in the archive: hook.sh",
+    );
+    assert!(
+        !target.exists(),
+        "a validation failure created the target directory"
+    );
+    assert_no_temp_entries(root.path());
+}
+
+#[test]
 fn unpack_extracts_into_a_name_version_directory() {
     let root = temp_root();
     let archive = root.path().join(SAMPLE_ARCHIVE);

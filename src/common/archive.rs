@@ -8,7 +8,8 @@
 //! read through so its data and CRC-32 are
 //! validated within the decompressed-size budgets, the archived
 //! `manifest.json` is validated with the rules the `pack` command
-//! applies, and the `dist/` directory and its entrypoint must exist.
+//! applies, the layout must be exactly `manifest.json` plus `dist/`, and
+//! the entrypoint must exist.
 //!
 //! Keeping one implementation means `unpack` accepts exactly the
 //! archives `verify` accepts, so no archive can pass one command and be
@@ -686,21 +687,43 @@ fn reject_non_regular(name: &str, mode: Option<u32>) -> Result<(), Error> {
     )));
 }
 
-/// Return an error unless some entry lives below `dist/`.
+/// Return an error unless the archive holds `manifest.json` and entries
+/// below `dist/` only.
 ///
-/// An explicit directory entry (`dist/`) proves the directory exists just
-/// as a file entry (`dist/app.ts`) does.
+/// Section 4 of `docs/SPEC.md` defines that layout, and `pack` writes
+/// nothing else, so any other root-level entry is refused: extraction
+/// would otherwise install files the format does not define, which a
+/// host could act on.
+///
+/// A missing `dist/` is reported before an unexpected entry, so an
+/// archive without a distribution directory keeps its diagnostic. An
+/// explicit directory entry (`dist/`) proves the directory exists just
+/// as a file entry (`dist/app.ts`) does, and a file entry named `dist`
+/// is refused because the layout's `dist` is a directory.
 fn require_dist(names: &[String], source: &Path) -> Result<(), Error> {
     let prefix = format!("{DIST_DIRECTORY_NAME}/");
+    let mut found = false;
     for name in names {
         if name.starts_with(prefix.as_str()) {
-            return Ok(());
+            found = true;
         }
     }
-    return Err(Error::ValidationError(format!(
-        "Missing 'dist' directory in archive: {}",
-        escape_path(source)
-    )));
+    if !found {
+        return Err(Error::ValidationError(format!(
+            "Missing 'dist' directory in archive: {}",
+            escape_path(source)
+        )));
+    }
+    for name in names {
+        if name == MANIFEST_FILE_NAME || name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        return Err(Error::ValidationError(format!(
+            "Entries outside 'dist/' are not allowed in the archive: {}",
+            escape_text(name)
+        )));
+    }
+    return Ok(());
 }
 
 /// Return an error unless the manifest entrypoint exists under `dist/`.
