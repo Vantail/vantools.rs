@@ -36,10 +36,16 @@ pub fn run_cli(args: &[String]) -> Result<(), Error> {
     };
 }
 
-/// Print the full help text of the `verify` command to stdout.
-pub(crate) fn print_verify_help() -> Result<(), Error> {
-    let metadata = VerifyCommand::new(PathBuf::new());
-    return parser::print_help(metadata.help());
+/// Run `verify` with the source collected by the interactive form.
+///
+/// The form only submits when the source is non-empty, so the value
+/// goes straight to the same runner the parsed flag uses.
+///
+/// # Errors
+///
+/// Returns any error of the `verify` command.
+pub(crate) fn run_with_path(source: PathBuf) -> Result<(), Error> {
+    return run_verify_command(Some(source));
 }
 
 /// Resolve the required flag and run the `verify` command.

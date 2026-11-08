@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use vantools::common::cli::{collect_arguments, to_exit_code};
 use vantools::common::{Error, VanError};
-use vantools::tui::menu::MenuChoice;
+use vantools::tui::menu::{MenuChoice, MenuSelection};
 use vantools::van;
 
 mod cli;
@@ -60,38 +60,58 @@ fn run() -> Result<(), Error> {
 
 /// Show the start menu and run the chosen command.
 ///
-/// The menu restores the terminal before it returns, so the form and the
-/// command output are written to the normal screen. `pack` asks for its
-/// paths in the interactive form; the other commands print their help
-/// text.
+/// The menu restores the terminal before it returns, so the command
+/// output is written to the normal screen. A command chosen from the
+/// list carries the paths typed into its form; quitting carries none.
 fn run_menu() -> Result<(), Error> {
-    let choice = vantools::tui::menu::show_menu()?;
+    let selection = vantools::tui::menu::show_menu()?;
     vantools::tui::menu::clear_screen();
-    return match choice {
+    return match selection.choice() {
         MenuChoice::Quit => Ok(()),
-        MenuChoice::Pack => run_pack_form(),
-        MenuChoice::Verify => cli::verify::print_verify_help(),
-        MenuChoice::Unpack => cli::unpack::print_unpack_help(),
+        MenuChoice::Pack => run_pack(&selection),
+        MenuChoice::Unpack => run_unpack(&selection),
+        MenuChoice::Verify => run_verify(&selection),
         // The library enum is non-exhaustive, so a variant added later
         // must not break the binary; leaving the menu is the safe default.
         _ => Ok(()),
     };
 }
 
-/// Collect the `pack` paths in the interactive form and run the command.
-///
-/// The screen is cleared once the form has closed, so the progress bar
-/// and the report start on an empty screen. Cancelling the form ends the
-/// run successfully without doing any work.
-fn run_pack_form() -> Result<(), Error> {
-    let values = vantools::tui::form::show_pack_form()?;
-    vantools::tui::menu::clear_screen();
-    let (source, target) = match values {
-        Some(values) => values,
+/// Return the source and target paths of a two-field submission.
+fn two_paths(selection: &MenuSelection) -> Option<(PathBuf, PathBuf)> {
+    return match (selection.source(), selection.target()) {
+        (Some(source), Some(target)) => {
+            Some((PathBuf::from(source), PathBuf::from(target)))
+        }
+        _ => None,
+    };
+}
+
+/// Run `pack` with the paths collected by the form.
+fn run_pack(selection: &MenuSelection) -> Result<(), Error> {
+    let paths = match two_paths(selection) {
+        Some(value) => value,
         None => return Ok(()),
     };
-    return cli::pack::run_with_paths(
-        PathBuf::from(source),
-        PathBuf::from(target),
-    );
+    let (source, target) = paths;
+    return cli::pack::run_with_paths(source, target);
+}
+
+/// Run `unpack` with the paths collected by the form.
+fn run_unpack(selection: &MenuSelection) -> Result<(), Error> {
+    let paths = match two_paths(selection) {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+    let (source, target) = paths;
+    return cli::unpack::run_with_paths(source, target);
+}
+
+/// Run `verify` with the source collected by the form.
+fn run_verify(selection: &MenuSelection) -> Result<(), Error> {
+    let source = match selection.source() {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+    return cli::verify::run_with_path(PathBuf::from(source));
 }

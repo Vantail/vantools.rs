@@ -36,10 +36,19 @@ pub fn run_cli(args: &[String]) -> Result<(), Error> {
     };
 }
 
-/// Print the full help text of the `unpack` command to stdout.
-pub(crate) fn print_unpack_help() -> Result<(), Error> {
-    let metadata = UnpackCommand::new(PathBuf::new(), PathBuf::new());
-    return parser::print_help(metadata.help());
+/// Run `unpack` with the paths collected by the interactive form.
+///
+/// The form only submits when both buffers are non-empty, so the values
+/// go straight to the same runner the parsed flags use.
+///
+/// # Errors
+///
+/// Returns any error of the `unpack` command.
+pub(crate) fn run_with_paths(
+    source: PathBuf,
+    target: PathBuf,
+) -> Result<(), Error> {
+    return run_unpack_command(Some(source), Some(target));
 }
 
 /// Resolve the required flags and run the `unpack` command.
