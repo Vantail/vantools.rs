@@ -377,6 +377,31 @@ fn tilde_input_keeps_the_field_and_the_style() {
 }
 
 #[test]
+fn tilde_press_appends_to_the_active_buffer() {
+    let mut state = AppState::pack_form();
+    let finished = press(&mut state, KeyCode::Char('~'));
+    assert!(finished.is_none(), "typing tilde finished the menu early");
+    let (frame, cursor) = build_frame(&state);
+    assert!(cursor.is_none(), "the native cursor is not hidden");
+    assert!(frame.contains('~'), "tilde was not appended: {frame}");
+    let block = format!(
+        "{}{} ",
+        SetBackgroundColor(Color::Black),
+        SetForegroundColor(Color::White)
+    );
+    assert!(frame.contains(&block), "the custom cursor is missing");
+    let visible = visible_text(&frame);
+    assert!(visible.contains('~'), "tilde is missing from the field");
+    press(&mut state, KeyCode::Tab);
+    let finished = press(&mut state, KeyCode::Char('~'));
+    assert!(finished.is_none(), "typing tilde finished the menu early");
+    let (moved, moved_cursor) = build_frame(&state);
+    assert!(moved_cursor.is_none(), "the native cursor is not hidden");
+    assert!(moved.contains(&block), "the custom cursor did not move");
+    assert!(visible_text(&moved).contains('~'), "tilde is missing after tab");
+}
+
+#[test]
 fn form_leaves_a_blank_line_above_the_hint() {
     let frame = visible_frame_of(&AppState::pack_form());
     let lines = frame_lines(&frame);
