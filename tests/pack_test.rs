@@ -436,7 +436,7 @@ fn pack_failure_keeps_previous_archive_intact() {
 }
 
 #[test]
-fn pack_clears_a_leftover_temporary_file() {
+fn pack_refuses_an_existing_temporary_file() {
     let root = temp_root();
     let source = root.path().join("plugin");
     create_source(&source);
@@ -446,11 +446,17 @@ fn pack_clears_a_leftover_temporary_file() {
     let stale =
         target.join(format!("{BAD_ARCHIVE}.tmp-{}", std::process::id()));
     write_file(&stale, "stale leftover\n");
-    let report = pack_report(&source, &target);
-    assert!(!report.target_created);
-    assert!(archive.is_file());
-    assert!(!stale.exists());
-    assert_no_temp_files(&target);
+    let error = pack_error(&source, &target);
+    let expected =
+        format!("Temporary archive already exists: {}", escape_path(&stale));
+    assert_validation_message(error, &expected);
+    let content = fs::read(&stale);
+    let kept = match content {
+        Ok(value) => value,
+        Err(error) => panic!("failed to read {}: {error}", stale.display()),
+    };
+    assert_eq!(kept.as_slice(), b"stale leftover\n".as_slice());
+    assert!(!archive.exists());
 }
 
 #[test]

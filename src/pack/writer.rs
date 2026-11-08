@@ -42,11 +42,8 @@ pub(super) fn write_archive(
 ) -> Result<(), Error> {
     refuse_non_regular_archive(archive_path)?;
     let temp_path = temp_archive_path(archive_path)?;
-    let opened = create_temp_file(&temp_path);
-    let built = match opened {
-        Ok(file) => build_archive(&temp_path, file, manifest_bytes, entries),
-        Err(error) => Err(error),
-    };
+    let file = create_temp_file(&temp_path)?;
+    let built = build_archive(&temp_path, file, manifest_bytes, entries);
     return match built {
         Ok(()) => install_archive(&temp_path, archive_path),
         Err(error) => {
@@ -119,45 +116,32 @@ fn refuse_non_regular_archive(path: &Path) -> Result<(), Error> {
 ///
 /// The file is opened with `create_new`, which fails when the path
 /// already exists, so an entry replaced during the check-then-create
-/// window can never be followed or truncated. A `.tmp-` sibling left
-/// by an aborted run removes that entry once so the run can retry.
+/// window can never be followed or truncated. A pre-existing entry is
+/// refused rather than removed: it may belong to the user instead of an
+/// earlier run, and `unpack` treats its temporary directory the same
+/// way.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Runtime`] when the file cannot be created.
+/// Returns [`Error::ValidationError`] when an entry already exists at
+/// the path, and [`Error::Runtime`] when the file cannot be created.
 fn create_temp_file(path: &Path) -> Result<File, Error> {
     let opened = open_new_file(path);
     return match opened {
         Ok(value) => Ok(value),
         Err(error) => {
-            if error.kind() != io::ErrorKind::AlreadyExists {
-                return Err(Error::Runtime(format!(
-                    "failed to create {}: {error}",
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                return Err(Error::ValidationError(format!(
+                    "Temporary archive already exists: {}",
                     escape_path(path)
                 )));
             }
-            remove_leftover(path);
-            let retried = open_new_file(path);
-            return match retried {
-                Ok(value) => Ok(value),
-                Err(retry_error) => Err(Error::Runtime(format!(
-                    "failed to create {}: {retry_error}",
-                    escape_path(path)
-                ))),
-            };
+            Err(Error::Runtime(format!(
+                "failed to create {}: {error}",
+                escape_path(path)
+            )))
         }
     };
-}
-
-/// Delete a leftover temporary file.
-///
-/// Removal is deliberately best-effort: a leftover that cannot be
-/// removed makes the retry in [`create_temp_file`] fail with the same
-/// underlying reason, so it is reported there instead of swallowed
-/// here.
-fn remove_leftover(path: &Path) {
-    // Best effort; see the function documentation.
-    let _ = fs::remove_file(path);
 }
 
 /// Open `path` for writing only when it does not exist yet.
