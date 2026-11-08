@@ -522,15 +522,21 @@ fn require_dist(names: &[String], source: &Path) -> Result<(), Error> {
 
 /// Return an error unless the manifest entrypoint exists under `dist/`.
 ///
-/// Every entry was already required to be a regular file, so a name
-/// match also proves the entrypoint is a regular file rather than a
-/// directory or device entry.
+/// The name must match exactly, and directory entries are skipped, so
+/// an entry that only differs from the expected name by a trailing
+/// slash does not satisfy the check. The manifest validation rejects a
+/// trailing slash in the entrypoint itself, so the expected name always
+/// names a file, and a `dist/app.ts/` directory entry can never stand
+/// in for an `app.ts` entrypoint that carries no payload.
 fn require_entrypoint(
     names: &[String],
     manifest: &Manifest,
 ) -> Result<(), Error> {
     let expected = format!("{DIST_DIRECTORY_NAME}/{}", manifest.entrypoint);
     for name in names {
+        if name.ends_with('/') {
+            continue;
+        }
         if name == &expected {
             return Ok(());
         }

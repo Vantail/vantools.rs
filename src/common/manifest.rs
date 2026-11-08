@@ -73,7 +73,7 @@ impl Manifest {
     ///
     /// The manifest must be UTF-8 without a byte order mark, contain a
     /// non-empty bounded-length name and version, and a relative
-    /// entrypoint path.
+    /// entrypoint path that names a file.
     ///
     /// # Errors
     ///
@@ -212,7 +212,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
             )));
         }
     }
-    let entrypoint = validate_archive_entry(&manifest.entrypoint);
+    let entrypoint = validate_entrypoint(&manifest.entrypoint);
     return match entrypoint {
         Ok(()) => Ok(()),
         Err(_) => Err(Error::ValidationError(format!(
@@ -220,6 +220,31 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), Error> {
             escape_text(&manifest.entrypoint)
         ))),
     };
+}
+
+/// Validate the manifest entrypoint as a relative archive path.
+///
+/// The entrypoint names the plugin entry file below `dist/`, so it must
+/// name a file rather than a directory. [`validate_archive_entry`]
+/// strips one trailing slash because a standard ZIP archive marks a
+/// directory entry that way, which would let an `app.ts/` entrypoint be
+/// satisfied by a `dist/app.ts/` directory entry that carries no
+/// payload. The marker is therefore rejected here explicitly, so the
+/// check the `pack` command applies to the file on disk and the check
+/// `verify` and `unpack` apply to the archive entry agree.
+///
+/// # Errors
+///
+/// Returns [`Error::ValidationError`] when the entrypoint ends with a
+/// directory marker, and when it violates an archive path rule.
+fn validate_entrypoint(entrypoint: &str) -> Result<(), Error> {
+    if entrypoint.ends_with('/') {
+        return Err(Error::ValidationError(String::from(
+            "Entrypoint must not end with a slash",
+        )));
+    }
+    let checked = validate_archive_entry(entrypoint);
+    return checked;
 }
 
 /// Validate the plugin name used in the archive file name.
