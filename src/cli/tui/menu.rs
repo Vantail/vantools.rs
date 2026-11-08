@@ -30,7 +30,7 @@ use vantools::common::Error;
 ///
 /// The rows are kept verbatim: the face depends on the exact column of
 /// every character, so no row may be reflowed or trimmed.
-const LOGO_ROWS: [&str; 8] = [
+pub const LOGO_ROWS: [&str; 8] = [
     "                  _______          _     ",
     "                 |__   __|        | |    ",
     " __   ____ _ _ __   | | ___   ___ | |___ ",
@@ -42,13 +42,13 @@ const LOGO_ROWS: [&str; 8] = [
 ];
 
 /// Slogan shown below the wordmark.
-const SLOGAN: &str = "The van Plugin- and Packagemanager CLI.";
+pub const SLOGAN: &str = "The van Plugin- and Packagemanager CLI.";
 
 /// Hint line shown below the commands.
 const HINT: &str = "  ↑↓ Select | Enter Confirm | Q Quit";
 
 /// Minimum number of columns the start menu is laid out for.
-const MIN_WIDTH: u16 = 80;
+pub const MIN_WIDTH: u16 = 80;
 
 /// Message shown when the window is narrower than 80 columns.
 const NARROW_MESSAGE: &str =
@@ -249,7 +249,7 @@ impl Drop for TerminalGuard {
 /// Every line ends with CR LF. Raw mode turns off the terminal's output
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
-fn build_frame(selected: usize) -> String {
+pub fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
     for row in LOGO_ROWS {
         frame.push_str(row);
@@ -343,7 +343,7 @@ fn choice_at(index: usize) -> MenuChoice {
 }
 
 /// Return the index above `current`, wrapping to the last row.
-fn previous_index(current: usize) -> usize {
+pub fn previous_index(current: usize) -> usize {
     if current == 0 {
         return MENU_ENTRIES.len() - 1;
     }
@@ -351,73 +351,10 @@ fn previous_index(current: usize) -> usize {
 }
 
 /// Return the index below `current`, wrapping to the first row.
-fn next_index(current: usize) -> usize {
+pub fn next_index(current: usize) -> usize {
     let next = current + 1;
     if next >= MENU_ENTRIES.len() {
         return 0;
     }
     return next;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn down_moves_to_the_next_entry_and_wraps() {
-        assert_eq!(next_index(0), 1);
-        assert_eq!(next_index(3), 0);
-    }
-
-    #[test]
-    fn up_moves_to_the_previous_entry_and_wraps() {
-        assert_eq!(previous_index(1), 0);
-        assert_eq!(previous_index(0), 3);
-    }
-
-    #[test]
-    fn logo_rows_have_a_uniform_width() {
-        let first = match LOGO_ROWS.first() {
-            Some(value) => value.len(),
-            None => return,
-        };
-        for row in LOGO_ROWS {
-            assert_eq!(row.len(), first, "row is not uniform: {row:?}");
-        }
-    }
-
-    #[test]
-    fn frame_uses_carriage_returns_between_lines() {
-        let frame = build_frame(0);
-        let mut previous = ' ';
-        for character in frame.chars() {
-            if character == '\n' {
-                assert_eq!(
-                    previous, '\r',
-                    "line feed without a carriage return"
-                );
-            }
-            previous = character;
-        }
-    }
-
-    #[test]
-    fn frame_fits_the_minimum_width() {
-        let frame = build_frame(0);
-        let limit = usize::from(MIN_WIDTH) - 1;
-        for line in frame.lines() {
-            assert!(line.len() <= limit, "line is too long: {line:?}");
-        }
-    }
-
-    #[test]
-    fn frame_marks_only_the_selected_entry() {
-        let frame = build_frame(1);
-        assert!(frame.contains("> Verify"));
-        assert!(!frame.contains("> Pack"));
-        assert!(frame.contains(SLOGAN));
-        for row in LOGO_ROWS {
-            assert!(frame.contains(row));
-        }
-    }
 }

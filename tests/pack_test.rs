@@ -10,7 +10,7 @@ use vantools::common::Error;
 use vantools::common::validation::{
     escape_path, validate_archive_entry, validate_no_node_modules,
 };
-use vantools::pack::{PackCommand, PackReport};
+use vantools::pack::{PackCommand, PackReport, require_created_directory};
 use zip::ZipArchive;
 
 /// Name of the archive the example plugin must produce.
@@ -688,6 +688,83 @@ fn validate_no_node_modules_accepts_other_paths() {
     match result {
         Ok(()) => {}
         Err(error) => panic!("valid path was rejected: {error}"),
+    }
+}
+
+#[test]
+fn created_directory_accepts_a_real_directory() {
+    let root = temp_root();
+    let directory = root.path().join("target");
+    create_dir(&directory);
+    let result = require_created_directory(&directory);
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("valid directory was refused: {error}"),
+    }
+}
+
+#[test]
+fn created_directory_refuses_a_regular_file() {
+    let root = temp_root();
+    let file = root.path().join("target");
+    write_file(&file, "not a directory\n");
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        escape_path(&file)
+    );
+    let result = require_created_directory(&file);
+    match result {
+        Ok(()) => panic!("expected the path to be refused"),
+        Err(Error::ValidationError(message)) => {
+            assert_eq!(message, expected);
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn created_directory_reports_a_missing_path() {
+    let root = temp_root();
+    let missing = root.path().join("target");
+    let result = require_created_directory(&missing);
+    match result {
+        Ok(()) => panic!("expected the missing path to be refused"),
+        Err(Error::Runtime(message)) => {
+            let rendered = escape_path(&missing);
+            let expected = format!("failed to inspect {rendered}");
+            assert!(message.contains(&expected), "unexpected: {message}");
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn created_directory_refuses_a_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root();
+    let real = root.path().join("real");
+    create_dir(&real);
+    let link = root.path().join("target");
+    let linked = symlink(&real, &link);
+    match linked {
+        Ok(()) => {}
+        Err(error) => {
+            panic!("failed to create {}: {error}", link.display());
+        }
+    }
+    let expected = format!(
+        "Symlinks or non-regular files are not allowed: {}",
+        escape_path(&link)
+    );
+    let result = require_created_directory(&link);
+    match result {
+        Ok(()) => panic!("expected the path to be refused"),
+        Err(Error::ValidationError(message)) => {
+            assert_eq!(message, expected);
+        }
+        Err(other) => panic!("unexpected error: {other}"),
     }
 }
 
