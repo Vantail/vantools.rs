@@ -51,8 +51,11 @@ const ITALIC: &str = "\x1b[3m";
 /// ANSI SGR sequence that resets every attribute.
 const RESET: &str = "\x1b[0m";
 
-/// ANSI SGR sequence that marks the active form field.
-const ACTIVE_FIELD: &str = "\x1b[1;32m";
+/// ANSI SGR sequence that turns text bold.
+const BOLD: &str = "\x1b[1m";
+
+/// ANSI SGR sequence that turns text green.
+const GREEN: &str = "\x1b[32m";
 
 /// Rainbow palette the logo cycles through, left to right.
 const RAINBOW: [&str; 6] = [
@@ -671,8 +674,8 @@ fn line_count(text: &str) -> u16 {
 ///
 /// The logo, version, slogan, command list, and form are always drawn.
 /// A form appends a separator and its editable command line below the
-/// command list, and one hint line at the very bottom describes the
-/// keys the current screen accepts.
+/// command list, with a blank line before the single hint line at the
+/// very bottom that describes the keys the current screen accepts.
 ///
 /// The returned cursor is `Some((column, row))` while a form is open, so
 /// the caller can place the terminal cursor inside the active field, and
@@ -695,7 +698,7 @@ pub fn build_frame(state: &AppState) -> (String, Option<(u16, u16)>) {
         frame.push_str("\r\n");
         let row = line_count(&frame);
         frame.push_str(&form_line(state));
-        frame.push_str("\r\n");
+        frame.push_str("\r\n\r\n");
         cursor = Some((form_cursor_column(state), row));
     }
     frame.push_str(hint_text(state));
@@ -794,10 +797,15 @@ fn form_line(state: &AppState) -> String {
     return line;
 }
 
-/// Render one buffer between brackets, highlighting it when active.
+/// Render one buffer between uncolored brackets, styling it when active.
+///
+/// The brackets sit outside the style codes: the opening bracket is
+/// printed before the attributes and the closing bracket after the
+/// reset, so neither is ever colored or swallowed by a preceding
+/// sequence, whatever characters the buffer holds.
 fn field_cell(active_field: usize, index: usize, buffer: &str) -> String {
     if active_field == index {
-        return format!("[{ACTIVE_FIELD}{buffer}{RESET}]");
+        return format!("[{BOLD}{ITALIC}{GREEN}{buffer}{RESET}]");
     }
     return format!("[{buffer}]");
 }

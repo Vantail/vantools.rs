@@ -332,13 +332,68 @@ fn tab_moves_the_highlight_to_the_target_field() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "src");
     let source_active = frame_of(&state);
-    assert!(source_active.contains("\x1b[1;32msrc\x1b[0m"));
-    assert!(!source_active.contains("\x1b[1;32mout\x1b[0m"));
+    assert!(source_active.contains("\x1b[1m\x1b[3m\x1b[32msrc\x1b[0m"));
+    assert!(!source_active.contains("\x1b[1m\x1b[3m\x1b[32mout\x1b[0m"));
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "out");
     let target_active = frame_of(&state);
-    assert!(!target_active.contains("\x1b[1;32msrc\x1b[0m"));
-    assert!(target_active.contains("\x1b[1;32mout\x1b[0m"));
+    assert!(!target_active.contains("\x1b[1m\x1b[3m\x1b[32msrc\x1b[0m"));
+    assert!(target_active.contains("\x1b[1m\x1b[3m\x1b[32mout\x1b[0m"));
+}
+
+#[test]
+fn tilde_input_keeps_the_brackets_and_the_style() {
+    let mut state = AppState::pack_form();
+    type_text(&mut state, "~/x");
+    let (frame, cursor) = build_frame(&state);
+    assert!(
+        frame.contains("[\x1b[1m\x1b[3m\x1b[32m~/x\x1b[0m]"),
+        "tilde dropped the styling or a bracket: {frame}"
+    );
+    let visible = visible_text(&frame);
+    assert!(visible.contains("[~/x]"), "a bracket is missing");
+    let position = match cursor {
+        Some(value) => value,
+        None => panic!("the form has no cursor"),
+    };
+    let expected = String::from("van pack --source [~/x").len();
+    assert_eq!(usize::from(position.0), expected);
+}
+
+#[test]
+fn form_leaves_a_blank_line_above_the_hint() {
+    let frame = visible_frame_of(&AppState::pack_form());
+    let lines = frame_lines(&frame);
+    let mut form_row: Option<usize> = None;
+    let mut hint_row: Option<usize> = None;
+    let mut row: usize = 0;
+    while row < lines.len() {
+        let line = match lines.get(row) {
+            Some(value) => *value,
+            None => break,
+        };
+        if line.contains("van pack --source") {
+            form_row = Some(row);
+        }
+        if line.contains(FORM_HINT) {
+            hint_row = Some(row);
+        }
+        row += 1;
+    }
+    let form = match form_row {
+        Some(value) => value,
+        None => panic!("form line is missing"),
+    };
+    let hint = match hint_row {
+        Some(value) => value,
+        None => panic!("hint line is missing"),
+    };
+    assert_eq!(hint, form + 2, "the hint is too close to the form");
+    let gap = match lines.get(form + 1) {
+        Some(value) => *value,
+        None => panic!("gap line is missing"),
+    };
+    assert!(gap.trim().is_empty(), "the gap line holds text: {gap:?}");
 }
 
 #[test]
