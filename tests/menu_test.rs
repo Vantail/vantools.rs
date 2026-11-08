@@ -246,7 +246,7 @@ fn hint_matches_the_current_screen() {
     assert!(!menu_visible.contains(FORM_HINT));
 
     let (form, form_cursor) = build_frame(&AppState::pack_form());
-    assert!(form_cursor.is_some(), "the form hides the cursor");
+    assert!(form_cursor.is_none(), "the native cursor is not hidden");
     let form_visible = visible_text(&form);
     assert!(form_visible.contains(FORM_HINT));
     assert!(!form_visible.contains(MENU_HINT));
@@ -264,68 +264,51 @@ fn cursor_sits_after_the_active_source_text() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "src");
     let (frame, cursor) = build_frame(&state);
-    let position = match cursor {
-        Some(value) => value,
-        None => panic!("the form has no cursor"),
-    };
-    let lines = frame_lines(&frame);
-    let mut form_row: u16 = 0;
-    let mut row: u16 = 0;
-    while row < lines.len() as u16 {
-        let line = match lines.get(usize::from(row)) {
-            Some(value) => *value,
-            None => break,
-        };
-        if visible_text(line).contains("van pack --source") {
-            form_row = row;
-        }
-        row += 1;
-    }
-    assert_eq!(position.1, form_row, "cursor is not on the form line");
-    let line = match lines.get(usize::from(form_row)) {
-        Some(value) => *value,
-        None => panic!("form line is missing"),
-    };
-    let visible = visible_text(line);
-    let prefix = String::from("van pack --source src");
-    assert!(visible.starts_with(&prefix));
-    assert_eq!(usize::from(position.0), prefix.len());
+    assert!(cursor.is_none(), "the native cursor is not hidden");
+    let block = format!(
+        "{}{} ",
+        SetBackgroundColor(Color::Black),
+        SetForegroundColor(Color::White)
+    );
+    assert!(frame.contains(&block), "the custom cursor is missing");
+    let visible = visible_frame_of(&state);
+    assert!(
+        visible.contains("van pack --source src "),
+        "the cursor is not after the text: {visible:?}"
+    );
 }
 
 #[test]
 fn cursor_moves_with_typing_and_tab() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "sr");
-    let (_, source_cursor) = build_frame(&state);
-    let source_position = match source_cursor {
-        Some(value) => value,
-        None => panic!("the form has no cursor"),
-    };
-    assert_eq!(usize::from(source_position.0), 20);
+    let (short_frame, short_cursor) = build_frame(&state);
+    assert!(short_cursor.is_none(), "the native cursor is not hidden");
+    let block = format!(
+        "{}{} ",
+        SetBackgroundColor(Color::Black),
+        SetForegroundColor(Color::White)
+    );
+    assert!(short_frame.contains(&block), "the custom cursor is missing");
+    assert!(
+        visible_frame_of(&state).contains("van pack --source sr "),
+        "the cursor is not after the text"
+    );
     press(&mut state, KeyCode::Backspace);
-    let (_, shorter_cursor) = build_frame(&state);
-    let shorter_position = match shorter_cursor {
-        Some(value) => value,
-        None => panic!("the form has no cursor"),
-    };
-    assert_eq!(shorter_position.0, source_position.0 - 1);
+    assert!(
+        visible_frame_of(&state).contains("van pack --source s "),
+        "the cursor did not move with backspace"
+    );
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "out");
     let (frame, target_cursor) = build_frame(&state);
-    let target_position = match target_cursor {
-        Some(value) => value,
-        None => panic!("the form has no cursor"),
-    };
-    assert_eq!(target_position.1, source_position.1);
-    let lines = frame_lines(&frame);
-    let line = match lines.get(usize::from(target_position.1)) {
-        Some(value) => *value,
-        None => panic!("form line is missing"),
-    };
-    let visible = visible_text(line);
-    let prefix = String::from("van pack --source s --target out");
-    assert!(visible.starts_with(&prefix));
-    assert_eq!(usize::from(target_position.0), prefix.len());
+    assert!(target_cursor.is_none(), "the native cursor is not hidden");
+    assert!(frame.contains(&block), "the custom cursor is missing");
+    let visible = visible_frame_of(&state);
+    assert!(
+        visible.contains("van pack --source s --target out "),
+        "the cursor did not move to the target: {visible:?}"
+    );
 }
 
 #[test]
@@ -377,19 +360,20 @@ fn tilde_input_keeps_the_field_and_the_style() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "~/x");
     let (frame, cursor) = build_frame(&state);
+    assert!(cursor.is_none(), "the native cursor is not hidden");
     let active_bg = format!("{}", SetBackgroundColor(Color::White));
     assert!(frame.contains(&active_bg), "tilde dropped the styling");
     assert!(frame.contains("~/x"), "tilde text is missing: {frame}");
+    let block = format!(
+        "{}{} ",
+        SetBackgroundColor(Color::Black),
+        SetForegroundColor(Color::White)
+    );
+    assert!(frame.contains(&block), "the custom cursor is missing");
     let visible = visible_text(&frame);
-    assert!(visible.contains("~/x"), "tilde text is missing");
+    assert!(visible.contains("~/x "), "tilde text or cursor is missing");
     assert!(!visible.contains('['), "brackets were not removed");
     assert!(!visible.contains(']'), "brackets were not removed");
-    let position = match cursor {
-        Some(value) => value,
-        None => panic!("the form has no cursor"),
-    };
-    let expected = String::from("van pack --source ~/x").len();
-    assert_eq!(usize::from(position.0), expected);
 }
 
 #[test]
@@ -435,9 +419,10 @@ fn backspace_removes_the_last_typed_character() {
     press(&mut state, KeyCode::Backspace);
     let frame = visible_frame_of(&state);
     assert!(
-        frame.contains("van pack --source ab --target"),
+        frame.contains("van pack --source ab "),
         "unexpected form line: {frame}"
     );
+    assert!(frame.contains("--target"), "target field is missing");
 }
 
 #[test]

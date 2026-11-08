@@ -640,39 +640,16 @@ fn row_has_glyph(row: &str) -> bool {
     return false;
 }
 
-/// Return how many characters `text` holds.
-///
-/// Iterator adapters are not used in this crate, so the width is counted
-/// with an explicit loop instead of `chars().count()`.
-fn char_width(text: &str) -> usize {
-    let mut width: usize = 0;
-    for _character in text.chars() {
-        width += 1;
-    }
-    return width;
-}
-
-/// Return how many lines `text` already holds.
-fn line_count(text: &str) -> u16 {
-    let mut lines: u16 = 0;
-    for character in text.chars() {
-        if character == '\n' {
-            lines = lines.saturating_add(1);
-        }
-    }
-    return lines;
-}
-
-/// Render the screen for `state` and the cursor it needs.
+/// Render the screen for `state` and its hidden native cursor.
 ///
 /// The logo, version, slogan, command list, and form are always drawn.
 /// A form appends a separator and its editable command line below the
 /// command list, with a blank line before the single hint line at the
 /// very bottom that describes the keys the current screen accepts.
 ///
-/// The returned cursor is `Some((column, row))` while a form is open, so
-/// the caller can place the terminal cursor inside the active field, and
-/// `None` on the command list, where the cursor is hidden.
+/// The native cursor is always hidden: the form draws its own block
+/// cursor at the end of the active field, so the returned cursor is
+/// always `None`.
 ///
 /// The logo is drawn as a horizontal rainbow gradient: each
 /// non-whitespace character takes the next palette color and is
@@ -685,18 +662,15 @@ fn line_count(text: &str) -> u16 {
 /// the first column and each line would start where the previous ended.
 pub fn build_frame(state: &AppState) -> (String, Option<(u16, u16)>) {
     let mut frame = build_menu_section(selected_index(state));
-    let mut cursor: Option<(u16, u16)> = None;
     if is_form(state) {
         frame.push_str(&separator_line());
         frame.push_str("\r\n");
-        let row = line_count(&frame);
         frame.push_str(&form_line(state));
         frame.push_str("\r\n\r\n");
-        cursor = Some((form_cursor_column(state), row));
     }
     frame.push_str(hint_text(state));
     frame.push_str("\r\n");
-    return (frame, cursor);
+    return (frame, None);
 }
 
 /// Render the wordmark, version, slogan, and commands.
@@ -802,22 +776,30 @@ fn form_line(state: &AppState) -> String {
 ///
 /// The field is always at least one character wide: an empty buffer is
 /// shown as a single space so the background stays visible and the
-/// layout does not collapse. No brackets are used.
+/// layout does not collapse. No brackets are used. The active field
+/// appends a custom block cursor with inverted colors, so the cursor
+/// is exactly as tall as the text and forms a seamless block.
 fn render_field(text: &str, is_active: bool) -> String {
+    if is_active {
+        let mut field = String::new();
+        field.push_str(&format!("{}", SetBackgroundColor(Color::White)));
+        field.push_str(&format!("{}", SetForegroundColor(Color::Black)));
+        if text.is_empty() {
+            field.push(' ');
+        } else {
+            field.push_str(&format!("{}", text.bold()));
+        }
+        field.push_str(&format!("{}", SetBackgroundColor(Color::Black)));
+        field.push_str(&format!("{}", SetForegroundColor(Color::White)));
+        field.push(' ');
+        field.push_str(&format!("{}", ResetColor));
+        return field;
+    }
     let display_text = if text.is_empty() {
         " "
     } else {
         text
     };
-    if is_active {
-        return format!(
-            "{}{}{}{}",
-            SetBackgroundColor(Color::White),
-            SetForegroundColor(Color::Black),
-            display_text.bold(),
-            ResetColor
-        );
-    }
     return format!(
         "{}{}{}{}",
         SetBackgroundColor(Color::DarkGrey),
@@ -835,41 +817,6 @@ fn hint_text(state: &AppState) -> &'static str {
             ..
         } => FORM_HINT,
     };
-}
-
-/// Return the column the cursor occupies inside the active field.
-///
-/// The column counts characters, not bytes, so a buffer with multi-byte
-/// characters still puts the cursor after the text it holds. The fields
-/// have no brackets: the source starts after `"van <command> --source "`
-/// and the target starts after the visible source field plus
-/// `" --target "`. An empty field still shows one space, so its width
-/// counts as one when the target offset is computed.
-fn form_cursor_column(state: &AppState) -> u16 {
-    let (command, active_field, source, target) = match state {
-        AppState::Form {
-            command,
-            active_field,
-            source_buffer,
-            target_buffer,
-        } => (command, active_field, source_buffer, target_buffer),
-        AppState::Menu(_) => return 0,
-    };
-    let mut column = "van ".len() + command_name(*command).len();
-    column += FORM_SOURCE.len();
-    column += char_width(source);
-    if *active_field == TARGET_FIELD && field_count(*command) >= 2 {
-        if source.is_empty() {
-            column += 1;
-        }
-        column += FORM_TARGET.len();
-        column += char_width(target);
-    }
-    let limit = usize::from(u16::MAX);
-    if column > limit {
-        return u16::MAX;
-    }
-    return column as u16;
 }
 
 /// Render one row, marking and highlighting it when it is selected.
@@ -904,13 +851,14 @@ fn pad_label(label: &str) -> String {
     return cell;
 }
 
-/// Draw the current screen and place the cursor for its state.
+/// Draw the current screen with the native cursor hidden.
 ///
 /// Clearing first keeps a shorter frame from leaving parts of the
-/// previous screen behind. The cursor is hidden on the command list and
-/// shown inside the active field while a form is open.
+/// previous screen behind. The native cursor stays hidden on every
+/// screen: the form draws its own block cursor at the end of the
+/// active field.
 fn draw_screen(state: &AppState) -> Result<(), Error> {
-    let (frame, cursor) = build_frame(state);
+    let (frame, _) = build_frame(state);
     let mut stdout = io::stdout();
     let queued =
         queue!(stdout, Clear(ClearType::All), MoveTo(0, 0), Print(frame));
@@ -918,12 +866,8 @@ fn draw_screen(state: &AppState) -> Result<(), Error> {
         let message = format!("failed to draw the menu: {error}");
         return Err(Error::Runtime(message));
     }
-    let positioned = match cursor {
-        Some((column, row)) => queue!(stdout, MoveTo(column, row), Show),
-        None => queue!(stdout, Hide),
-    };
-    if let Err(error) = positioned {
-        let message = format!("failed to place the cursor: {error}");
+    if let Err(error) = queue!(stdout, Hide) {
+        let message = format!("failed to hide the cursor: {error}");
         return Err(Error::Runtime(message));
     }
     let flushed = stdout.flush();
