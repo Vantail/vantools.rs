@@ -1,6 +1,7 @@
 //! Integration tests for the start-menu layout and state machine.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::style::Stylize;
 use vantools::tui::menu::{
     AppState, LOGO_ROWS, MIN_WIDTH, MenuChoice, MenuSelection, SLOGAN,
     build_frame, handle_key, next_index, previous_index,
@@ -332,20 +333,44 @@ fn tab_moves_the_highlight_to_the_target_field() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "src");
     let source_active = frame_of(&state);
-    assert!(source_active.contains("\x1b[1;3;32msrc\x1b[0m"));
-    assert!(!source_active.contains("\x1b[1;3;32mout\x1b[0m"));
+    let styled_src = format!("{}", "src".green().bold().italic());
     assert!(
-        !source_active.contains("[\x1b[0msrc\x1b[0m]"),
-        "the active field is drawn in the inactive style"
+        source_active.contains(&styled_src),
+        "source text is not green bold italic"
+    );
+    let active_open = format!("{}", "[".yellow().bold());
+    let active_close = format!("{}", "]".yellow().bold());
+    assert!(
+        source_active.contains(&active_open),
+        "active brackets are not distinguished"
+    );
+    assert!(
+        source_active.contains(&active_close),
+        "active brackets are not distinguished"
+    );
+    assert!(
+        visible_text(&source_active).contains("[src]"),
+        "a bracket is missing"
     );
     press(&mut state, KeyCode::Tab);
     type_text(&mut state, "out");
     let target_active = frame_of(&state);
-    assert!(!target_active.contains("\x1b[1;3;32msrc\x1b[0m"));
-    assert!(target_active.contains("\x1b[1;3;32mout\x1b[0m"));
+    let styled_out = format!("{}", "out".green().bold().italic());
     assert!(
-        target_active.contains("[\x1b[0msrc\x1b[0m]"),
-        "the inactive field is not in the default style"
+        target_active.contains(&styled_src),
+        "inactive source lost green bold italic"
+    );
+    assert!(
+        target_active.contains(&styled_out),
+        "target text is not green bold italic"
+    );
+    assert!(
+        visible_text(&target_active).contains("[src]"),
+        "a bracket is missing"
+    );
+    assert!(
+        visible_text(&target_active).contains("[out]"),
+        "a bracket is missing"
     );
 }
 
@@ -354,10 +379,8 @@ fn tilde_input_keeps_the_brackets_and_the_style() {
     let mut state = AppState::pack_form();
     type_text(&mut state, "~/x");
     let (frame, cursor) = build_frame(&state);
-    assert!(
-        frame.contains("[\x1b[1;3;32m~/x\x1b[0m]"),
-        "tilde dropped the styling or a bracket: {frame}"
-    );
+    let styled = format!("{}", "~/x".green().bold().italic());
+    assert!(frame.contains(&styled), "tilde dropped the styling: {frame}");
     let visible = visible_text(&frame);
     assert!(visible.contains("[~/x]"), "a bracket is missing");
     let position = match cursor {

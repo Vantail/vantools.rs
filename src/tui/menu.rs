@@ -51,14 +51,6 @@ const ITALIC: &str = "\x1b[3m";
 /// ANSI SGR sequence that resets every attribute.
 const RESET: &str = "\x1b[0m";
 
-/// Style of the form field that receives typed characters: bold,
-/// italic, and green.
-const ACTIVE_STYLE: &str = "\x1b[1;3;32m";
-
-/// Style of a form field that does not receive typed characters: the
-/// terminal's default attributes.
-const INACTIVE_STYLE: &str = "\x1b[0m";
-
 /// Rainbow palette the logo cycles through, left to right.
 const RAINBOW: [&str; 6] = [
     "\x1b[31m", // Red
@@ -780,6 +772,12 @@ fn separator_line() -> String {
 }
 
 /// Render the editable command line of the current form.
+///
+/// Both buffers are green bold italic through native `Stylize`, which
+/// respects the terminal palette. The brackets are pushed strictly
+/// outside the styled text so they stay visible whatever the buffer
+/// holds, including `~`. The active field keeps the same text style
+/// but uses yellow bold brackets so it stays distinguishable.
 fn form_line(state: &AppState) -> String {
     let (command, active_field, source, target) = match state {
         AppState::Form {
@@ -790,7 +788,10 @@ fn form_line(state: &AppState) -> String {
         } => (command, active_field, source_buffer, target_buffer),
         AppState::Menu(_) => return String::new(),
     };
-    let mut line = format!("van {}{FORM_SOURCE}", command_name(*command));
+    let mut line = String::new();
+    line.push_str("van ");
+    line.push_str(command_name(*command));
+    line.push_str(FORM_SOURCE);
     line.push_str(&field_cell(*active_field, SOURCE_FIELD, source));
     if field_count(*command) >= 2 {
         line.push_str(FORM_TARGET);
@@ -799,19 +800,27 @@ fn form_line(state: &AppState) -> String {
     return line;
 }
 
-/// Render one buffer between uncolored brackets in its field style.
+/// Render one buffer with green bold italic text between brackets.
 ///
-/// Only the active field is bold italic green; the other field keeps the
-/// terminal's default attributes. The brackets sit outside the style
-/// codes: the opening bracket is printed before the attributes and the
-/// closing bracket after the reset, so neither is ever colored or
-/// swallowed by a preceding sequence, whatever the buffer holds.
+/// The brackets are pushed outside the styled text: the opening bracket
+/// is printed before the style and the closing bracket after it, so
+/// neither is ever swallowed by a preceding sequence, whatever the
+/// buffer holds. The active field uses yellow bold brackets to stand
+/// out while both fields share the same text style.
 fn field_cell(active_field: usize, index: usize, buffer: &str) -> String {
-    let style = match active_field == index {
-        true => ACTIVE_STYLE,
-        false => INACTIVE_STYLE,
-    };
-    return format!("[{style}{buffer}{RESET}]");
+    let styled = format!("{}", buffer.green().bold().italic());
+    if active_field == index {
+        let mut cell = String::new();
+        cell.push_str(&format!("{}", "[".yellow().bold()));
+        cell.push_str(&styled);
+        cell.push_str(&format!("{}", "]".yellow().bold()));
+        return cell;
+    }
+    let mut cell = String::new();
+    cell.push('[');
+    cell.push_str(&styled);
+    cell.push(']');
+    return cell;
 }
 
 /// Return the hint shown at the bottom of the current screen.
