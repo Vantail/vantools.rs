@@ -89,9 +89,20 @@ fn logo_is_colored_and_resets_after_each_glyph() {
 }
 
 #[test]
-fn frame_ends_with_the_italic_version_line() {
+fn frame_places_the_italic_version_on_the_slogan_line() {
     let frame = build_frame(0);
-    let expected =
-        format!("\x1b[3mversion: {}\x1b[0m", env!("CARGO_PKG_VERSION"));
-    assert!(frame.contains(&expected), "version line is missing");
+    let label = format!("version: {}", env!("CARGO_PKG_VERSION"));
+    let styled = format!("\x1b[3m{label}\x1b[0m");
+    let limit = usize::from(MIN_WIDTH) - 1;
+    let mut found = false;
+    for line in frame.lines() {
+        let visible = visible_text(line);
+        if !visible.contains(SLOGAN) {
+            continue;
+        }
+        assert!(line.contains(&styled), "version is not italic");
+        assert_eq!(visible.len(), limit, "version is not right-aligned");
+        found = true;
+    }
+    assert!(found, "slogan line is missing");
 }
