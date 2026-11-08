@@ -42,6 +42,21 @@ pub(crate) fn print_pack_help() -> Result<(), Error> {
     return parser::print_help(metadata.help());
 }
 
+/// Run `pack` with the paths collected by the interactive form.
+///
+/// The form only submits when both buffers are non-empty, so the values
+/// go straight to the same runner the parsed flags use.
+///
+/// # Errors
+///
+/// Returns any error of the `pack` command.
+pub(crate) fn run_with_paths(
+    source: PathBuf,
+    target: PathBuf,
+) -> Result<(), Error> {
+    return run_pack_command(Some(source), Some(target));
+}
+
 /// Resolve the required flags and run the `pack` command.
 ///
 /// The source flag is reported as missing before the target flag, the

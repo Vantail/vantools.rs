@@ -1,5 +1,6 @@
 //! CLI entry point for the `van` package and plugin manager.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use vantools::common::cli::{collect_arguments, to_exit_code};
@@ -57,20 +58,40 @@ fn run() -> Result<(), Error> {
     return van::run_with_args(arguments);
 }
 
-/// Show the start menu and print the help of the chosen command.
+/// Show the start menu and run the chosen command.
 ///
-/// The menu restores the terminal before it returns, so the help text
-/// is written to the normal screen.
+/// The menu restores the terminal before it returns, so the form and the
+/// command output are written to the normal screen. `pack` asks for its
+/// paths in the interactive form; the other commands print their help
+/// text.
 fn run_menu() -> Result<(), Error> {
     let choice = vantools::tui::menu::show_menu()?;
     vantools::tui::menu::clear_screen();
     return match choice {
         MenuChoice::Quit => Ok(()),
-        MenuChoice::Pack => cli::pack::print_pack_help(),
+        MenuChoice::Pack => run_pack_form(),
         MenuChoice::Verify => cli::verify::print_verify_help(),
         MenuChoice::Unpack => cli::unpack::print_unpack_help(),
         // The library enum is non-exhaustive, so a variant added later
         // must not break the binary; leaving the menu is the safe default.
         _ => Ok(()),
     };
+}
+
+/// Collect the `pack` paths in the interactive form and run the command.
+///
+/// The screen is cleared once the form has closed, so the progress bar
+/// and the report start on an empty screen. Cancelling the form ends the
+/// run successfully without doing any work.
+fn run_pack_form() -> Result<(), Error> {
+    let values = vantools::tui::form::show_pack_form()?;
+    vantools::tui::menu::clear_screen();
+    let (source, target) = match values {
+        Some(values) => values,
+        None => return Ok(()),
+    };
+    return cli::pack::run_with_paths(
+        PathBuf::from(source),
+        PathBuf::from(target),
+    );
 }
