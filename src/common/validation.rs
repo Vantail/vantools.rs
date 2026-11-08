@@ -58,8 +58,8 @@ const RESERVED_DEVICE_NAMES: [&str; 22] = [
 ///
 /// Rejects backslashes, absolute paths, drive letters, empty path
 /// segments, `.` and `..` traversal segments, paths that are not
-/// normalized to Unicode NFC, Windows reserved device names, and
-/// segments that end with a dot or a space.
+/// normalized to Unicode NFC, Windows reserved device names, segments
+/// that end with a dot or a space, and (on Windows builds) colons.
 ///
 /// # Errors
 ///
@@ -112,15 +112,22 @@ fn strip_directory_marker(path_str: &str) -> &str {
 /// Windows file name.
 ///
 /// Win32 resolves a reserved device name to a device instead of a file,
-/// and it removes a trailing dot or space from every component of a
-/// path. An entry subject to either rule therefore does not name the
-/// file it was verified as once it is extracted on Windows, which is
-/// the hazard the Unicode NFC rule covers for macOS.
+/// removes a trailing dot or space from every component of a path, and
+/// reads a colon after the first character of a component as the start
+/// of a named data stream. An entry subject to any of these rules
+/// therefore does not name the file it was verified as once it is
+/// extracted on Windows, which is the hazard the Unicode NFC rule
+/// covers for macOS.
+///
+/// The colon is rejected only on Windows builds, because it is an
+/// ordinary file name character elsewhere and a name such as `a:b.js`
+/// refers to a real file there.
 ///
 /// # Errors
 ///
 /// Returns [`Error::ValidationError`] for the first segment that is a
-/// reserved device name or ends with a dot or a space.
+/// reserved device name, ends with a dot or a space, or names an
+/// alternate data stream.
 fn validate_windows_segments(entry_path: &str) -> Result<(), Error> {
     for segment in entry_path.split('/') {
         if is_reserved_device_name(segment) {
@@ -135,19 +142,29 @@ fn validate_windows_segments(entry_path: &str) -> Result<(), Error> {
                 escape_text(entry_path)
             )));
         }
+        if names_alternate_data_stream(segment) {
+            return Err(Error::ValidationError(format!(
+                "Colons are not allowed in paths: {}",
+                escape_text(entry_path)
+            )));
+        }
     }
     return Ok(());
 }
 
 /// Returns true when `segment` names a reserved Windows device.
 ///
-/// The comparison ignores ASCII case and stops at the first dot,
-/// because Win32 treats `con`, `Con`, and `con.txt` alike while
-/// `console` is an ordinary file name.
+/// The comparison ignores ASCII case and stops at the first dot or
+/// colon, because Win32 treats `con`, `Con`, `con.txt`, and `CON:x`
+/// alike while `console` is an ordinary file name.
 fn is_reserved_device_name(segment: &str) -> bool {
-    let base = match segment.split_once('.') {
+    let before_extension = match segment.split_once('.') {
         Some(value) => value.0,
         None => segment,
+    };
+    let base = match before_extension.split_once(':') {
+        Some(value) => value.0,
+        None => before_extension,
     };
     for reserved in RESERVED_DEVICE_NAMES {
         if base.eq_ignore_ascii_case(reserved) {
@@ -163,6 +180,33 @@ fn is_reserved_device_name(segment: &str) -> bool {
 /// segment would not name the file the archive lists.
 fn ends_with_dot_or_space(segment: &str) -> bool {
     return segment.ends_with('.') || segment.ends_with(' ');
+}
+
+/// Returns true when `segment` would name an alternate data stream.
+///
+/// Win32 reads a colon after the first character of a component as the
+/// start of a named data stream, so an entry named `dist/app.ts:payload`
+/// writes into a stream of `dist/app.ts` instead of creating the file
+/// the archive lists. The stream is hidden from directory listings and
+/// persists attached to the file, so the extracted tree would not match
+/// the names that were validated.
+///
+/// Only Windows builds reject the colon: it is an ordinary character
+/// in a Unix file name, and a name such as `a:b.js` refers to a real
+/// file there. A Windows extraction rejects that archive before any
+/// entry is written.
+#[cfg(windows)]
+fn names_alternate_data_stream(segment: &str) -> bool {
+    return segment.contains(':');
+}
+
+/// Returns true when `segment` would name an alternate data stream.
+///
+/// A colon names no stream outside Win32, so other builds accept it and
+/// a name such as `a:b.js` keeps referring to a real file.
+#[cfg(not(windows))]
+fn names_alternate_data_stream(_segment: &str) -> bool {
+    return false;
 }
 
 /// Validates that `path` is a regular file or a directory.
@@ -573,8 +617,9 @@ fn escape_line(text: &str) -> String {
 /// Returns true when the path is absolute, starts with a Windows drive
 /// letter, or has an empty segment.
 ///
-/// A colon is only rejected as part of a drive letter, so a Unix file
-/// name that contains one, such as `dist/a:b.js`, is accepted.
+/// A colon is rejected here only as part of a drive letter, so a Unix
+/// file name that contains one, such as `dist/a:b.js`, is left to the
+/// segment checks, which reject it on Windows builds.
 fn is_absolute_or_has_empty_segment(path_str: &str) -> bool {
     if path_str.starts_with('/') {
         return true;
@@ -594,7 +639,7 @@ fn is_absolute_or_has_empty_segment(path_str: &str) -> bool {
 ///
 /// The colon counts as a drive letter only at index 1, after an ASCII
 /// alphabetic character. A colon anywhere else in the path is a legal
-/// Unix file name character and is left alone.
+/// Unix file name character and is left to the segment checks.
 fn has_drive_letter_prefix(path_str: &str) -> bool {
     let bytes = path_str.as_bytes();
     let letter = match bytes.first() {

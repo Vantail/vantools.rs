@@ -547,6 +547,9 @@ fn validate_archive_entry_rejects_non_nfc_paths() {
     );
 }
 
+/// A colon is an ordinary file name character outside Windows, where
+/// Win32 reads it as the start of an alternate data stream.
+#[cfg(not(windows))]
 #[test]
 fn validate_archive_entry_accepts_colons_in_file_names() {
     let colon = validate_archive_entry("dist/a:b.js");
@@ -556,6 +559,30 @@ fn validate_archive_entry_accepts_colons_in_file_names() {
             panic!("valid path with a colon was rejected: {error}");
         }
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn validate_archive_entry_rejects_colons_on_windows() {
+    let error = entry_error("dist/a:b.js");
+    assert_validation_message(
+        error,
+        "Colons are not allowed in paths: dist/a:b.js",
+    );
+}
+
+#[test]
+fn validate_archive_entry_rejects_device_stream_names() {
+    let named = entry_error("dist/CON:x");
+    assert_validation_message(
+        named,
+        "Reserved device names are not allowed in paths: dist/CON:x",
+    );
+    let data = entry_error("dist/aux::$DATA");
+    assert_validation_message(
+        data,
+        "Reserved device names are not allowed in paths: dist/aux::$DATA",
+    );
 }
 
 #[test]
