@@ -87,3 +87,11 @@ fn logo_is_colored_and_resets_after_each_glyph() {
     assert!(frame.contains("\x1b[33m_\x1b[0m"));
     assert!(!frame.contains("\x1b[31m "), "a space was colored");
 }
+
+#[test]
+fn frame_ends_with_the_italic_version_line() {
+    let frame = build_frame(0);
+    let expected =
+        format!("\x1b[3mversion: {}\x1b[0m", env!("CARGO_PKG_VERSION"));
+    assert!(frame.contains(&expected), "version line is missing");
+}

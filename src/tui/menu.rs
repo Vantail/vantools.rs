@@ -41,6 +41,9 @@ pub const LOGO_ROWS: [&str; 8] = [
     "                                         ",
 ];
 
+/// ANSI SGR sequence that switches to italics.
+const ITALIC: &str = "\x1b[3m";
+
 /// ANSI SGR sequence that resets every attribute.
 const RESET: &str = "\x1b[0m";
 
@@ -274,6 +277,9 @@ impl Drop for TerminalGuard {
 /// Every line ends with CR LF. Raw mode turns off the terminal's output
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
+///
+/// The crate version closes the frame in italics, one blank line below
+/// the hint, so the menu always names the build it belongs to.
 pub fn build_frame(selected: usize) -> String {
     let mut frame = String::new();
     for row in LOGO_ROWS {
@@ -305,6 +311,12 @@ pub fn build_frame(selected: usize) -> String {
     }
     frame.push_str("\r\n");
     frame.push_str(HINT);
+    frame.push_str("\r\n");
+    frame.push_str("\r\n");
+    frame.push_str(ITALIC);
+    frame.push_str("version: ");
+    frame.push_str(env!("CARGO_PKG_VERSION"));
+    frame.push_str(RESET);
     frame.push_str("\r\n");
     return frame;
 }
