@@ -4,9 +4,10 @@
 //! wordmark, the slogan, and the four top-level commands, and returns
 //! the command the user confirmed. Choosing a command keeps that layout
 //! on screen and draws its parameter form below the command list, so the
-//! logo and the menu stay visible while the paths are typed. Raw mode
-//! and the alternate screen belong to a [`TerminalGuard`], which
-//! restores both when the menu leaves its scope, including when it
+//! logo and the menu stay visible while the paths are typed. One hint
+//! line at the bottom describes the keys the current screen accepts.
+//! Raw mode and the alternate screen belong to a [`TerminalGuard`],
+//! which restores both when the menu leaves its scope, including when it
 //! returns an error.
 //!
 //! The layout is written for at least 80 columns. A narrower window
@@ -66,8 +67,11 @@ const RAINBOW: [&str; 6] = [
 /// Slogan shown below the wordmark.
 pub const SLOGAN: &str = "The vantail package and plugin manager CLI";
 
-/// Hint line shown below the commands.
-const HINT: &str = "  ↑↓ Select | Enter Confirm | Q Quit";
+/// Hint shown while the command list is active.
+const MENU_HINT: &str = "↑↓ Select | Enter Confirm | Q Quit";
+
+/// Hint shown while a parameter form is active.
+const FORM_HINT: &str = "Tab to switch | Enter to confirm | Esc to cancel";
 
 /// Minimum number of columns the start menu is laid out for.
 pub const MIN_WIDTH: u16 = 80;
@@ -96,12 +100,6 @@ const FORM_TARGET: &str = " --target ";
 
 /// Text between the source value and the target value in the form line.
 const FIELD_GAP: &str = "] --target [";
-
-/// Hint shown under a form with two fields.
-const TWO_FIELD_HINT: &str = "(Tab to switch, Enter to confirm, Esc to cancel)";
-
-/// Hint shown under a form with one field.
-const SINGLE_FIELD_HINT: &str = "(Enter to confirm, Esc to cancel)";
 
 /// Index of the source field in a form.
 const SOURCE_FIELD: usize = 0;
@@ -658,11 +656,27 @@ fn char_width(text: &str) -> usize {
     return width;
 }
 
-/// Render the screen for `state`.
+/// Return how many lines `text` already holds.
+fn line_count(text: &str) -> u16 {
+    let mut lines: u16 = 0;
+    for character in text.chars() {
+        if character == '\n' {
+            lines = lines.saturating_add(1);
+        }
+    }
+    return lines;
+}
+
+/// Render the screen for `state` and the cursor it needs.
 ///
-/// The logo, version, slogan, command list, and hint are always drawn.
-/// A form appends a separator, its editable command line, and a hint
-/// below them, which keeps the menu visible while the form is open.
+/// The logo, version, slogan, command list, and form are always drawn.
+/// A form appends a separator and its editable command line below the
+/// command list, and one hint line at the very bottom describes the
+/// keys the current screen accepts.
+///
+/// The returned cursor is `Some((column, row))` while a form is open, so
+/// the caller can place the terminal cursor inside the active field, and
+/// `None` on the command list, where the cursor is hidden.
 ///
 /// The logo is drawn as a horizontal rainbow gradient: each
 /// non-whitespace character takes the next palette color and is
@@ -673,21 +687,23 @@ fn char_width(text: &str) -> usize {
 /// Every line ends with CR LF. Raw mode turns off the terminal's output
 /// post-processing, so a bare line feed moves down without returning to
 /// the first column and each line would start where the previous ended.
-pub fn build_frame(state: &AppState) -> String {
+pub fn build_frame(state: &AppState) -> (String, Option<(u16, u16)>) {
     let mut frame = build_menu_section(selected_index(state));
-    if !is_form(state) {
-        return frame;
+    let mut cursor: Option<(u16, u16)> = None;
+    if is_form(state) {
+        frame.push_str(&separator_line());
+        frame.push_str("\r\n");
+        let row = line_count(&frame);
+        frame.push_str(&form_line(state));
+        frame.push_str("\r\n");
+        cursor = Some((form_cursor_column(state), row));
     }
-    frame.push_str(&separator_line());
+    frame.push_str(hint_text(state));
     frame.push_str("\r\n");
-    frame.push_str(&form_line(state));
-    frame.push_str("\r\n");
-    frame.push_str(form_hint(state));
-    frame.push_str("\r\n");
-    return frame;
+    return (frame, cursor);
 }
 
-/// Render the wordmark, version, slogan, commands, and hint.
+/// Render the wordmark, version, slogan, and commands.
 ///
 /// The crate version sits directly below the wordmark, with no blank
 /// line between them: the trailing all-space logo rows are not drawn.
@@ -744,8 +760,6 @@ fn build_menu_section(selected: usize) -> String {
         index += 1;
     }
     frame.push_str("\r\n");
-    frame.push_str(HINT);
-    frame.push_str("\r\n");
     return frame;
 }
 
@@ -788,19 +802,14 @@ fn field_cell(active_field: usize, index: usize, buffer: &str) -> String {
     return format!("[{buffer}]");
 }
 
-/// Return the hint shown below the current form.
-fn form_hint(state: &AppState) -> &'static str {
-    let command = match state {
+/// Return the hint shown at the bottom of the current screen.
+fn hint_text(state: &AppState) -> &'static str {
+    return match state {
+        AppState::Menu(_) => MENU_HINT,
         AppState::Form {
-            command,
             ..
-        } => *command,
-        AppState::Menu(_) => return "",
+        } => FORM_HINT,
     };
-    if field_count(command) < 2 {
-        return SINGLE_FIELD_HINT;
-    }
-    return TWO_FIELD_HINT;
 }
 
 /// Return the column the cursor occupies inside the active field.
@@ -828,27 +837,6 @@ fn form_cursor_column(state: &AppState) -> u16 {
         return u16::MAX;
     }
     return column as u16;
-}
-
-/// Return the cursor position inside the form, when one is open.
-///
-/// The row counts the lines of the unchanged menu section plus the
-/// separator, so the cursor follows the layout without hardcoding the
-/// number of rows above it.
-fn cursor_position(state: &AppState) -> Option<(u16, u16)> {
-    if !is_form(state) {
-        return None;
-    }
-    let menu = build_menu_section(selected_index(state));
-    let mut rows: u16 = 0;
-    for character in menu.chars() {
-        if character == '\n' {
-            rows = rows.saturating_add(1);
-        }
-    }
-    let row = rows.saturating_add(1);
-    let column = form_cursor_column(state);
-    return Some((column, row));
 }
 
 /// Render one row, marking and highlighting it when it is selected.
@@ -889,7 +877,7 @@ fn pad_label(label: &str) -> String {
 /// previous screen behind. The cursor is hidden on the command list and
 /// shown inside the active field while a form is open.
 fn draw_screen(state: &AppState) -> Result<(), Error> {
-    let frame = build_frame(state);
+    let (frame, cursor) = build_frame(state);
     let mut stdout = io::stdout();
     let queued =
         queue!(stdout, Clear(ClearType::All), MoveTo(0, 0), Print(frame));
@@ -897,8 +885,8 @@ fn draw_screen(state: &AppState) -> Result<(), Error> {
         let message = format!("failed to draw the menu: {error}");
         return Err(Error::Runtime(message));
     }
-    let positioned = match cursor_position(state) {
-        Some((column, row)) => queue!(stdout, Show, MoveTo(column, row)),
+    let positioned = match cursor {
+        Some((column, row)) => queue!(stdout, MoveTo(column, row), Show),
         None => queue!(stdout, Hide),
     };
     if let Err(error) = positioned {
