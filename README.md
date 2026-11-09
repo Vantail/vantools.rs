@@ -285,15 +285,16 @@ by `rustfmt.toml`.
 
 | Path | Contents |
 | --- | --- |
-| `src/main.rs` | Binary entry point; routes subcommands and maps errors to exit codes |
+| `src/main.rs` | Binary entry point; runs the CLI and maps errors to exit codes |
 | `src/lib.rs` | Library root exposing the modules |
 | `src/van.rs` | Top-level argument parsing and help/version output |
 | `src/cli/mod.rs` | Terminal interaction modules used by the binary |
+| `src/cli/app.rs` | CLI orchestration and subcommand dispatch |
 | `src/cli/parser.rs` | Shared flag scanning, usage errors, and stdout output |
 | `src/cli/pack.rs` | `pack` argument parsing and dispatch |
 | `src/cli/unpack.rs` | `unpack` argument parsing and dispatch |
 | `src/cli/verify.rs` | `verify` argument parsing and dispatch |
-| `src/cli/output.rs` | Line writing that reports stream failures |
+| `src/cli/output.rs` | Line writing, general help, and stream failure reporting |
 | `src/cli/verify_report.rs` | Rendered output of a completed verification |
 | `src/cli/tui/` | Logo, tagged log lines, progress bar, and tree rendering |
 | `src/pack/mod.rs` | `pack` command and its source validation |
