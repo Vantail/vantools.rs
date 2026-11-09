@@ -10,7 +10,8 @@ pub const LOGO: &str = include_str!("logo.txt");
 
 /// Print the logo in neon green when stdout is a terminal.
 ///
-/// The crate version follows on the next line, right-aligned to the
+/// Trailing blank lines from the embedded file are trimmed so the
+/// crate version follows on the next line, right-aligned to the
 /// longest logo line and rendered in italics. Output is skipped on
 /// pipes, files, and CI so captured logs stay plain. Writing is best
 /// effort: a closed stdout cannot report its own failure.
@@ -20,8 +21,12 @@ pub fn print_logo() {
         return;
     }
     let mut handle = stdout.lock();
-    let _ = writeln!(handle, "\x1b[38;5;118m{LOGO}\x1b[0m");
-    let _ = writeln!(handle, "{}", formatted_version());
+    let trimmed = LOGO.trim_end();
+    let _ = write!(
+        handle,
+        "\x1b[38;5;118m{trimmed}\x1b[0m\n{}\n",
+        formatted_version()
+    );
     return;
 }
 
@@ -41,9 +46,12 @@ pub fn formatted_version() -> String {
 }
 
 /// Measure the longest line of the embedded logo in characters.
+///
+/// Trailing blank lines are ignored so the version aligns with the
+/// last visible row of the artwork.
 pub fn logo_max_width() -> usize {
     let mut max_width: usize = 0;
-    for line in LOGO.lines() {
+    for line in LOGO.trim_end().lines() {
         let mut line_len: usize = 0;
         for _ in line.chars() {
             line_len += 1;
