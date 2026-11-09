@@ -1,6 +1,7 @@
 //! CLI entry point for the `van` package and plugin manager.
 
 use std::io;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::process::ExitCode;
 
@@ -51,7 +52,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Error> {
     let arguments = collect_arguments()?;
     if arguments.is_empty() {
-        return print_general_help();
+        return run_empty_args();
     }
     let split = arguments.split_first();
     let (first, rest) = match split {
@@ -68,6 +69,28 @@ fn run() -> Result<(), Error> {
         return cli::verify::run_cli(rest);
     }
     return van::run_with_args(arguments);
+}
+
+/// Run the interactive menu without arguments, else general help.
+///
+/// A piped stdout has no screen to draw the menu on, so it keeps the
+/// plain general help text and exit code 0 the scripts and tests
+/// expect. On a terminal the logo is printed first and the menu
+/// routes the choice to the matching subcommand help.
+fn run_empty_args() -> Result<(), Error> {
+    if !io::stdout().is_terminal() {
+        return print_general_help();
+    }
+    vantools::tui::logo::print_logo();
+    let options = ["Pack", "Verify", "Unpack", "Quit"];
+    let selected =
+        vantools::tui::select::show_menu("Select a command:", &options)?;
+    return match selected {
+        Some(0) => cli::pack::run_cli(&[String::from("--help")]),
+        Some(1) => cli::verify::run_cli(&[String::from("--help")]),
+        Some(2) => cli::unpack::run_cli(&[String::from("--help")]),
+        Some(_) | None => Ok(()),
+    };
 }
 
 /// Print the logo and the general help text to stdout.
