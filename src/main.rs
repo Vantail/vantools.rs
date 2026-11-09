@@ -1,11 +1,11 @@
 //! CLI entry point for the `van` package and plugin manager.
 
-use std::path::PathBuf;
+use std::io;
+use std::io::Write;
 use std::process::ExitCode;
 
 use vantools::common::cli::{collect_arguments, to_exit_code};
 use vantools::common::{Error, VanError};
-use vantools::tui::menu::{MenuChoice, MenuSelection};
 use vantools::van;
 
 mod cli;
@@ -18,6 +18,18 @@ const UNPACK_SUBCOMMAND: &str = "unpack";
 
 /// Name of the subcommand routed to the `verify` module.
 const VERIFY_SUBCOMMAND: &str = "verify";
+
+/// General help text printed when `van` runs without arguments.
+const GENERAL_HELP: &str = "\
+Usage: van <command> [options]
+
+Commands:
+  pack    Compress a plugin directory into an archive
+  verify  Validate an archive
+  unpack  Extract an archive
+
+Run 'van <command> --help' for command-specific help.
+";
 
 fn main() -> ExitCode {
     let result = run();
@@ -39,7 +51,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Error> {
     let arguments = collect_arguments()?;
     if arguments.is_empty() {
-        return run_menu();
+        return print_general_help();
     }
     let split = arguments.split_first();
     let (first, rest) = match split {
@@ -58,60 +70,15 @@ fn run() -> Result<(), Error> {
     return van::run_with_args(arguments);
 }
 
-/// Show the start menu and run the chosen command.
-///
-/// The menu restores the terminal before it returns, so the command
-/// output is written to the normal screen. A command chosen from the
-/// list carries the paths typed into its form; quitting carries none.
-fn run_menu() -> Result<(), Error> {
-    let selection = vantools::tui::menu::show_menu()?;
-    vantools::tui::menu::clear_screen();
-    return match selection.choice() {
-        MenuChoice::Quit => Ok(()),
-        MenuChoice::Pack => run_pack(&selection),
-        MenuChoice::Unpack => run_unpack(&selection),
-        MenuChoice::Verify => run_verify(&selection),
-        // The library enum is non-exhaustive, so a variant added later
-        // must not break the binary; leaving the menu is the safe default.
-        _ => Ok(()),
-    };
-}
-
-/// Return the source and target paths of a two-field submission.
-fn two_paths(selection: &MenuSelection) -> Option<(PathBuf, PathBuf)> {
-    return match (selection.source(), selection.target()) {
-        (Some(source), Some(target)) => {
-            Some((PathBuf::from(source), PathBuf::from(target)))
+/// Print the general help text to stdout.
+fn print_general_help() -> Result<(), Error> {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    let written = write!(handle, "{GENERAL_HELP}");
+    return match written {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            Err(Error::Runtime(format!("failed to write output: {error}")))
         }
-        _ => None,
     };
-}
-
-/// Run `pack` with the paths collected by the form.
-fn run_pack(selection: &MenuSelection) -> Result<(), Error> {
-    let paths = match two_paths(selection) {
-        Some(value) => value,
-        None => return Ok(()),
-    };
-    let (source, target) = paths;
-    return cli::pack::run_with_paths(source, target);
-}
-
-/// Run `unpack` with the paths collected by the form.
-fn run_unpack(selection: &MenuSelection) -> Result<(), Error> {
-    let paths = match two_paths(selection) {
-        Some(value) => value,
-        None => return Ok(()),
-    };
-    let (source, target) = paths;
-    return cli::unpack::run_with_paths(source, target);
-}
-
-/// Run `verify` with the source collected by the form.
-fn run_verify(selection: &MenuSelection) -> Result<(), Error> {
-    let source = match selection.source() {
-        Some(value) => value,
-        None => return Ok(()),
-    };
-    return cli::verify::run_with_path(PathBuf::from(source));
 }
