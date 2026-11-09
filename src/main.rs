@@ -70,8 +70,9 @@ fn run() -> Result<(), Error> {
     return van::run_with_args(arguments);
 }
 
-/// Print the general help text to stdout.
+/// Print the logo and the general help text to stdout.
 fn print_general_help() -> Result<(), Error> {
+    vantools::tui::logo::print_logo();
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     let written = write!(handle, "{GENERAL_HELP}");
