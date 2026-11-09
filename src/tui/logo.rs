@@ -8,25 +8,58 @@ use std::io::{IsTerminal, Write};
 /// Embedded ASCII logo loaded from `logo.txt`.
 pub const LOGO: &str = include_str!("logo.txt");
 
-/// Print the logo in neon green when stdout is a terminal.
+/// ANSI reset code closing each colored character.
+const RESET: &str = "\x1b[0m";
+
+/// ANSI italic code for the version line.
+const ITALIC: &str = "\x1b[3m";
+
+/// Horizontal rainbow palette cycled per visible character.
+const RAINBOW: [&str; 6] = [
+    "\x1b[31m", // Red
+    "\x1b[33m", // Yellow
+    "\x1b[32m", // Green
+    "\x1b[36m", // Cyan
+    "\x1b[34m", // Blue
+    "\x1b[35m", // Magenta
+];
+
+/// Print the logo with a horizontal rainbow gradient.
 ///
 /// Trailing blank lines from the embedded file are trimmed so the
 /// crate version follows on the next line, right-aligned to the
-/// longest logo line and rendered in italics. Output is skipped on
-/// pipes, files, and CI so captured logs stay plain. Writing is best
-/// effort: a closed stdout cannot report its own failure.
+/// longest logo line and rendered in italics. Whitespace keeps no
+/// color and does not advance the palette. The version line itself
+/// stays plain italic. Output is skipped on pipes, files, and CI so
+/// captured logs stay plain. Writing is best effort: a closed
+/// stdout cannot report its own failure.
 pub fn print_logo() {
     let stdout = std::io::stdout();
     if !stdout.is_terminal() {
         return;
     }
     let mut handle = stdout.lock();
-    let trimmed = LOGO.trim_end();
-    let _ = write!(
-        handle,
-        "\x1b[38;5;118m{trimmed}\x1b[0m\n{}\n",
-        formatted_version()
-    );
+    let mut color_index: usize = 0;
+    for line in LOGO.trim_end().lines() {
+        for character in line.chars() {
+            if character == ' ' {
+                let _ = write!(handle, " ");
+            } else {
+                let slot: usize = color_index % RAINBOW.len();
+                match RAINBOW.get(slot) {
+                    Some(color) => {
+                        let _ = write!(handle, "{color}{character}{RESET}");
+                    }
+                    None => {
+                        let _ = write!(handle, "{character}");
+                    }
+                }
+                color_index += 1;
+            }
+        }
+        let _ = writeln!(handle);
+    }
+    let _ = writeln!(handle, "{}", formatted_version());
     return;
 }
 
@@ -42,7 +75,7 @@ pub fn formatted_version() -> String {
     }
     let padding = logo_max_width().saturating_sub(version_len);
     let padding_str = " ".repeat(padding);
-    return format!("{padding_str}\x1b[3m{version_text}\x1b[0m");
+    return format!("{padding_str}{ITALIC}{version_text}{RESET}");
 }
 
 /// Measure the longest line of the embedded logo in characters.
