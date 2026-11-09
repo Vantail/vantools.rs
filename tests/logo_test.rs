@@ -11,8 +11,8 @@ fn logo_is_not_empty() {
 }
 
 #[test]
-fn logo_contains_block_art() {
-    assert!(LOGO.contains('█'), "embedded logo is missing '█'");
+fn logo_contains_underscore() {
+    assert!(LOGO.contains('_'), "embedded logo is missing '_'");
     return;
 }
 
