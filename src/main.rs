@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     // The rendered error already starts with `error: `, so it becomes
     // the log message rather than repeating that prefix as a value.
     let message = format!("{error}");
-    vantools::tui::log::log_err(&message, "");
+    cli::output::log_err(&message, "");
     let code: i32 = error.exit_code();
     return ExitCode::from(to_exit_code(code));
 }

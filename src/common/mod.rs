@@ -7,6 +7,7 @@ pub mod error;
 pub mod fs;
 pub mod manifest;
 pub mod plugin;
+pub mod tree;
 pub mod validation;
 pub mod walk;
 

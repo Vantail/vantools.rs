@@ -13,12 +13,12 @@ use std::path::Path;
 
 use serde_json::Value;
 use vantools::common::Error;
+use vantools::common::tree::render_tree_lines;
 use vantools::common::validation::{escape_manifest, escape_path, escape_text};
-use vantools::tui::log::{log_block, log_info, log_ok, log_start};
-use vantools::tui::tree::render_tree_lines;
 use vantools::verify::VerifyReport;
 
 use super::output::write_line;
+use super::output::{log_block, log_info, log_ok, log_start};
 
 /// Print the result of a successful verification.
 ///

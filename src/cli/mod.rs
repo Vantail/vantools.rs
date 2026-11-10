@@ -5,8 +5,8 @@
 //! [`parser`], the subcommand wrappers in [`pack`], [`unpack`], and
 //! [`verify`], and the report formatting in [`output`] and
 //! [`verify_report`]. The library modules they call return structured
-//! reports and print nothing, and the terminal helpers they share come
-//! from `vantools::tui`.
+//! reports and print nothing, and the plain log helpers they share live
+//! in [`output`].
 
 pub mod app;
 pub mod output;
