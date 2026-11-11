@@ -17,6 +17,13 @@ fn make_field(width: usize) -> TextField {
     };
 }
 
+/// Insert every character of `text` in order.
+fn insert_text(field: &mut TextField, text: &str) {
+    for character in text.chars() {
+        field.insert_char(character);
+    }
+}
+
 /// Render one slot and return the bytes it wrote.
 fn render_bytes(field: &TextField) -> Vec<u8> {
     let mut writer = LineWriter::new(Vec::new());
@@ -80,20 +87,7 @@ fn a_fresh_field_is_empty() {
 #[test]
 fn inserting_characters_advances_the_cursor() {
     let mut field = make_field(5);
-    field.insert_char('a');
-    field.insert_char('b');
-    field.insert_char('c');
-    assert_eq!(field.value(), String::from("abc"));
-    assert_eq!(field.cursor_offset(), 4);
-}
-
-#[test]
-fn inserting_into_a_full_field_changes_nothing() {
-    let mut field = make_field(3);
-    field.insert_char('a');
-    field.insert_char('b');
-    field.insert_char('c');
-    field.insert_char('d');
+    insert_text(&mut field, "abc");
     assert_eq!(field.value(), String::from("abc"));
     assert_eq!(field.cursor_offset(), 4);
 }
@@ -101,9 +95,7 @@ fn inserting_into_a_full_field_changes_nothing() {
 #[test]
 fn inserting_at_the_cursor_places_the_character() {
     let mut field = make_field(5);
-    field.insert_char('a');
-    field.insert_char('b');
-    field.insert_char('c');
+    insert_text(&mut field, "abc");
     field.move_left();
     field.insert_char('X');
     assert_eq!(field.value(), String::from("abXc"));
@@ -148,38 +140,95 @@ fn cursor_moves_stop_at_the_boundaries() {
 }
 
 #[test]
-fn render_slot_pads_an_empty_field() {
-    let field = make_field(5);
+fn a_value_longer_than_the_slot_scrolls() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "abcdef");
+    assert_eq!(field.value(), String::from("abcdef"));
+    assert_eq!(field.cursor_offset(), 5);
     let actual = render_bytes(&field);
-    let expected = String::from("[.....]").into_bytes();
+    let expected = String::from("[cdef.]").into_bytes();
     assert_eq!(actual, expected);
 }
 
 #[test]
-fn render_slot_pads_a_short_value() {
+fn appending_keeps_the_cursor_in_the_slot() {
     let mut field = make_field(5);
-    field.insert_char('a');
-    field.insert_char('b');
+    insert_text(&mut field, "abcdefg");
+    assert_eq!(field.value(), String::from("abcdefg"));
+    assert_eq!(field.cursor_offset(), 5);
     let actual = render_bytes(&field);
-    let expected = String::from("[ab...]").into_bytes();
+    let expected = String::from("[defg.]").into_bytes();
     assert_eq!(actual, expected);
 }
 
 #[test]
-fn cursor_offset_tracks_the_edit_position() {
+fn moving_left_scrolls_the_window_back() {
     let mut field = make_field(5);
-    field.insert_char('a');
-    field.insert_char('b');
-    field.move_left();
-    assert_eq!(field.cursor_offset(), 2);
+    insert_text(&mut field, "abcdefg");
+    let mut moves = 0;
+    while moves < 6 {
+        field.move_left();
+        moves += 1;
+    }
+    assert_eq!(field.cursor_offset(), 1);
+    let actual = render_bytes(&field);
+    let expected = String::from("[bcdef]").into_bytes();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn deleting_at_the_window_start_keeps_it_visible() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "abcdefg");
+    let mut moves = 0;
+    while moves < 6 {
+        field.move_left();
+        moves += 1;
+    }
+    field.delete();
+    assert_eq!(field.value(), String::from("acdefg"));
+    assert_eq!(field.cursor_offset(), 1);
+    let actual = render_bytes(&field);
+    let expected = String::from("[cdefg]").into_bytes();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn shrinking_below_the_width_resets_the_window() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "abcdefg");
+    field.backspace();
+    field.backspace();
+    field.backspace();
+    assert_eq!(field.value(), String::from("abcd"));
+    assert_eq!(field.cursor_offset(), 5);
+    let actual = render_bytes(&field);
+    let expected = String::from("[abcd.]").into_bytes();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn appending_eight_characters_keeps_the_cursor_in_the_slot() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "abcdefgh");
+    assert_eq!(field.value(), String::from("abcdefgh"));
+    assert_eq!(field.cursor_offset(), 5);
+}
+
+#[test]
+fn multi_byte_characters_scroll_by_character() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "ääääää");
+    assert_eq!(field.value(), String::from("ääääää"));
+    let actual = render_bytes(&field);
+    let expected = String::from("[ääää.]").into_bytes();
+    assert_eq!(actual, expected);
 }
 
 #[test]
 fn backspace_removes_a_multi_byte_character() {
     let mut field = make_field(5);
     field.insert_char('ä');
-    // The cursor counts characters, so one multi-byte character leaves
-    // it one past the opening bracket of the slot.
     assert_eq!(field.cursor_offset(), 2);
     field.move_left();
     assert_eq!(field.cursor_offset(), 1);
@@ -190,11 +239,25 @@ fn backspace_removes_a_multi_byte_character() {
 }
 
 #[test]
-fn render_slot_pads_by_characters_not_bytes() {
-    let mut field = make_field(4);
-    field.insert_char('ä');
-    field.insert_char('b');
+fn a_fresh_field_renders_a_slot_full_of_padding() {
+    let field = make_field(5);
+    assert_eq!(field.cursor_offset(), 1);
     let actual = render_bytes(&field);
-    let expected = String::from("[äb..]").into_bytes();
+    let expected = String::from("[.....]").into_bytes();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn the_window_keeps_the_cursor_visible_after_an_insertion() {
+    let mut field = make_field(5);
+    insert_text(&mut field, "abcdef");
+    field.move_left();
+    field.move_left();
+    field.move_left();
+    field.insert_char('X');
+    assert_eq!(field.value(), String::from("abcXdef"));
+    assert_eq!(field.cursor_offset(), 3);
+    let actual = render_bytes(&field);
+    let expected = String::from("[cXdef]").into_bytes();
     assert_eq!(actual, expected);
 }
