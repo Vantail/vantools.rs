@@ -9,6 +9,9 @@
 //! in [`output`].
 
 pub mod app;
+/// Interactive terminal mode: the menu, its parameter forms, and the
+/// command runs they start.
+mod interactive;
 pub mod output;
 pub mod pack;
 pub mod parser;

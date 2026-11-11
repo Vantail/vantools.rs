@@ -8,10 +8,14 @@
 //! subcommands. The subcommand wrappers keep their own argument
 //! parsing; this module only decides which of them runs.
 
+use std::io;
+use std::io::IsTerminal;
+
 use vantools::common::Error;
 use vantools::common::cli::collect_arguments;
 use vantools::van;
 
+use super::interactive;
 use super::output;
 use super::pack;
 use super::unpack;
@@ -40,13 +44,21 @@ pub fn run() -> Result<(), Error> {
 
 /// Route the collected arguments to the module that owns them.
 ///
-/// `--help`, `--version`, and unknown subcommands are left to
-/// [`vantools::van::run_with_args`], which renders the top-level help
-/// text and usage errors.
+/// Without arguments the interactive menu opens when stdout is a
+/// terminal, because somebody is watching, while a piped or redirected
+/// stdout keeps the plain general help so scripts and CI runs are
+/// unaffected. `--help`, `--version`, and unknown subcommands are left
+/// to [`vantools::van::run_with_args`], which renders the top-level
+/// help text and usage errors.
 fn dispatch(arguments: &[String]) -> Result<(), Error> {
     let split = arguments.split_first();
     let (first, rest) = match split {
-        None => return output::print_general_help(),
+        None => {
+            if io::stdout().is_terminal() {
+                return interactive::run();
+            }
+            return output::print_general_help();
+        }
         Some(value) => value,
     };
     if first == PACK_SUBCOMMAND {
