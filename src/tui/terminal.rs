@@ -34,6 +34,9 @@ impl<W: Write> LineWriter<W> {
 
     /// Write `text` with newlines normalized, followed by one `\r\n`.
     ///
+    /// This is equivalent to [`LineWriter::write_text`] with `text`
+    /// followed by [`LineWriter::write_text`] with `"\n"`.
+    ///
     /// # Errors
     ///
     /// Returns the error reported by the inner writer.
@@ -44,6 +47,21 @@ impl<W: Write> LineWriter<W> {
             Err(error) => Err(error),
         };
         return written;
+    }
+
+    /// Write `text` with newlines normalized, without a trailing
+    /// newline.
+    ///
+    /// Every `\n` in `text` becomes `\r\n`, exactly as in
+    /// [`LineWriter::write_line`], so a caller that draws part of a line
+    /// cannot emit a bare `\n` either. Nothing is appended after the
+    /// text, which lets a caller build one line from several pieces.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error reported by the inner writer.
+    pub fn write_text(&mut self, text: &str) -> io::Result<()> {
+        return self.emit(text);
     }
 
     /// Write every line of `text` as its own terminated line.
