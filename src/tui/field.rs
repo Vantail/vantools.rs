@@ -16,6 +16,10 @@ use crate::tui::terminal::LineWriter;
 const PADDING: char = '.';
 
 /// A single-line editable value drawn as one inline slot.
+///
+/// A value can only contain characters accepted by the field's
+/// character filter, so a value can never carry a control sequence into
+/// the rendered slot or into a command argument.
 pub struct TextField {
     /// The stored characters, in display order.
     ///
@@ -83,7 +87,14 @@ impl TextField {
     /// The value has no length limit. When it no longer fits the slot,
     /// the window slides just enough to keep the cursor visible, so
     /// typing always shows where the next character goes.
+    ///
+    /// A character the filter rejects, such as a control character or an
+    /// invisible format character, is ignored: the call is a no-op and
+    /// neither the value nor the cursor changes.
     pub fn insert_char(&mut self, character: char) {
+        if !is_allowed(character) {
+            return;
+        }
         self.chars.insert(self.cursor, character);
         self.cursor += 1;
         self.update_offset();
@@ -209,4 +220,36 @@ impl TextField {
             return;
         }
     }
+}
+
+/// Return true when a character may be stored in a value.
+///
+/// The filter runs at the single point where a value gains characters,
+/// so a stored value can only contain characters that are safe to draw
+/// and to pass on as a command argument. Printable characters of every
+/// script stay allowed, because paths legitimately contain spaces,
+/// dashes, dots, slashes, and letters beyond ASCII.
+fn is_allowed(character: char) -> bool {
+    // Control characters, including `ESC` and `DEL`, are the bytes a
+    // terminal reads as commands. A stored one would be written back by
+    // the renderer and could inject an escape sequence or clear the
+    // screen.
+    if character.is_control() {
+        return false;
+    }
+    // Bidirectional overrides and isolates reorder the text after them,
+    // so a value would display differently from the characters it
+    // stores and could disguise a path.
+    let overrides = '\u{202A}'..='\u{202E}';
+    let isolates = '\u{2066}'..='\u{2069}';
+    if overrides.contains(&character) || isolates.contains(&character) {
+        return false;
+    }
+    // Zero-width and directional format characters occupy no cell, so
+    // they would hide content inside an otherwise ordinary value.
+    let invisible = '\u{200B}'..='\u{200F}';
+    if invisible.contains(&character) {
+        return false;
+    }
+    return true;
 }

@@ -315,8 +315,37 @@ fn push_flag(args: &mut Vec<String>, flag: &str, value: &str) {
     args.push(String::from(value));
 }
 
+/// Return true when any field value starts with a dash.
+///
+/// A value starting with `-` would be read by the CLI parser as a flag
+/// instead of as the path the form displays.
+fn values_start_with_dash(values: &[String]) -> bool {
+    for value in values {
+        if value.starts_with('-') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Report the error used when a form value would be read as a flag.
+///
+/// The error is printed on the restored screen exactly like a failed
+/// command, and the caller returns `Ok(())` so the menu re-opens. A
+/// submission therefore changes neither the screen nor the exit code.
+fn reject_dash_values() {
+    let error =
+        Error::Runtime(String::from("form values must not start with a dash"));
+    let message = format!("{error}");
+    output::log_err(&message, "");
+}
+
 /// Build the `pack` arguments of a submitted form and run the command.
 fn execute_pack(values: &[String]) -> Result<(), Error> {
+    if values_start_with_dash(values) {
+        reject_dash_values();
+        return Ok(());
+    }
     let split = values.split_first();
     let (source, rest) = match split {
         Some(value) => value,
@@ -338,6 +367,10 @@ fn execute_pack(values: &[String]) -> Result<(), Error> {
 
 /// Build the `verify` arguments of a submitted form and run the command.
 fn execute_verify(values: &[String]) -> Result<(), Error> {
+    if values_start_with_dash(values) {
+        reject_dash_values();
+        return Ok(());
+    }
     let split = values.split_first();
     let (source, surplus) = match split {
         Some(value) => value,
@@ -353,6 +386,10 @@ fn execute_verify(values: &[String]) -> Result<(), Error> {
 
 /// Build the `unpack` arguments of a submitted form and run the command.
 fn execute_unpack(values: &[String]) -> Result<(), Error> {
+    if values_start_with_dash(values) {
+        reject_dash_values();
+        return Ok(());
+    }
     let split = values.split_first();
     let (source, rest) = match split {
         Some(value) => value,

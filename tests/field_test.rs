@@ -4,9 +4,11 @@
 //! is built with `TextField::new`, edited with its insert, delete, and
 //! cursor methods, and rendered into an in-memory `LineWriter`.
 
+use crossterm::event::{KeyCode, KeyModifiers};
 use vantools::common::Error;
 use vantools::tui::field::TextField;
-use vantools::tui::terminal::LineWriter;
+use vantools::tui::form::{Form, FormOutcome};
+use vantools::tui::terminal::{InputEvent, LineWriter};
 
 /// Build a field of the given width, which every test keeps valid.
 fn make_field(width: usize) -> TextField {
@@ -30,6 +32,25 @@ fn render_bytes(field: &TextField) -> Vec<u8> {
     let written = field.render_slot(&mut writer);
     assert!(written.is_ok());
     return writer.into_inner();
+}
+
+/// Build a one-field form for the delegation tests.
+fn make_form() -> Form {
+    let segments = vec![String::from("cmd "), String::from("")];
+    let widths = vec![4];
+    let built = Form::new(&segments, &widths);
+    return match built {
+        Ok(form) => form,
+        Err(error) => panic!("the form should build: {error}"),
+    };
+}
+
+/// Build a key event without modifiers.
+fn key(code: KeyCode) -> InputEvent {
+    return InputEvent::Key {
+        code,
+        modifiers: KeyModifiers::NONE,
+    };
 }
 
 #[test]
@@ -260,4 +281,99 @@ fn the_window_keeps_the_cursor_visible_after_an_insertion() {
     let actual = render_bytes(&field);
     let expected = String::from("[cXdef]").into_bytes();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn an_escape_character_is_rejected() {
+    let mut field = make_field(5);
+    field.insert_char('\u{1b}');
+    assert!(field.value().is_empty());
+    assert_eq!(field.cursor_offset(), 1);
+}
+
+#[test]
+fn line_breaks_are_rejected() {
+    let mut field = make_field(5);
+    field.insert_char('\n');
+    field.insert_char('\r');
+    assert!(field.value().is_empty());
+    assert_eq!(field.cursor_offset(), 1);
+}
+
+#[test]
+fn delete_and_c1_characters_are_rejected() {
+    let mut field = make_field(5);
+    field.insert_char('\u{7f}');
+    field.insert_char('\u{9b}');
+    assert!(field.value().is_empty());
+    assert_eq!(field.cursor_offset(), 1);
+}
+
+#[test]
+fn direction_overrides_are_rejected() {
+    let mut field = make_field(5);
+    field.insert_char('\u{202e}');
+    field.insert_char('\u{2066}');
+    assert!(field.value().is_empty());
+    assert_eq!(field.cursor_offset(), 1);
+}
+
+#[test]
+fn zero_width_characters_are_rejected() {
+    let mut field = make_field(5);
+    field.insert_char('\u{200b}');
+    field.insert_char('\u{200f}');
+    assert!(field.value().is_empty());
+    assert_eq!(field.cursor_offset(), 1);
+}
+
+#[test]
+fn rejected_characters_leave_no_gap() {
+    let mut field = make_field(5);
+    field.insert_char('a');
+    field.insert_char('\u{1b}');
+    field.insert_char('b');
+    assert_eq!(field.value(), String::from("ab"));
+    assert_eq!(field.cursor_offset(), 3);
+}
+
+#[test]
+fn printable_characters_are_stored_verbatim() {
+    let mut field = make_field(8);
+    insert_text(&mut field, "ä -./");
+    assert_eq!(field.value(), String::from("ä -./"));
+    assert!(!field.is_empty());
+}
+
+#[test]
+fn rejection_does_not_move_the_cursor() {
+    let mut filtered = make_field(5);
+    filtered.insert_char('a');
+    filtered.insert_char('\u{202e}');
+    filtered.insert_char('b');
+    let mut direct = make_field(5);
+    direct.insert_char('a');
+    direct.insert_char('b');
+    assert_eq!(filtered.value(), direct.value());
+    assert_eq!(filtered.cursor_offset(), direct.cursor_offset());
+}
+
+#[test]
+fn a_form_ignores_a_rejected_character() {
+    let mut form = make_form();
+    let outcome = form.handle(key(KeyCode::Char('\u{202e}')));
+    assert_eq!(outcome, FormOutcome::Redraw);
+    let values = form.values();
+    let expected = vec![String::new()];
+    assert_eq!(values, expected);
+}
+
+#[test]
+fn a_form_inserts_a_dash_into_the_field() {
+    let mut form = make_form();
+    let outcome = form.handle(key(KeyCode::Char('-')));
+    assert_eq!(outcome, FormOutcome::Redraw);
+    let values = form.values();
+    let expected = vec![String::from("-")];
+    assert_eq!(values, expected);
 }
