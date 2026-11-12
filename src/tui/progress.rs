@@ -8,6 +8,11 @@
 //! reached its last step; a failure stops the animation at the step it
 //! reached and is shown immediately. Either result stays on screen until
 //! the user presses a key.
+//!
+//! A command describes its own progress heading and steps and may
+//! override the success and failure titles; everything it leaves out
+//! falls back to the generic defaults in this module, so a new command
+//! never needs its own animation or result screen.
 
 use std::io;
 use std::io::Write;
@@ -35,11 +40,14 @@ const STEP_DELAY: Duration = Duration::from_millis(200);
 /// Poll interval used while waiting for the user to dismiss a result.
 const DISMISS_POLL: Duration = Duration::from_millis(100);
 
-/// Title of a successful result.
+/// Title of a successful result when the command sets none.
 const SUCCESS_TITLE: &str = "✓ Pit stop complete!";
 
-/// Title of a failed result.
+/// Title of a failed result when the command sets none.
 const FAILURE_TITLE: &str = "✗ Engine stalled!";
+
+/// Details of a successful result when the command describes none.
+const SUCCESS_DETAILS: &str = "All systems nominal.";
 
 /// One simulated step of the progress animation.
 ///
@@ -60,6 +68,53 @@ impl ProgressStep {
             percent,
             message: String::from(message),
         };
+    }
+}
+
+/// The text one command shows around its progress animation.
+///
+/// The heading and the steps are always drawn. The result titles are
+/// optional: an unset title falls back to the generic success or failure
+/// title, so a command only names what it wants to say differently.
+pub struct TaskMessages<'a> {
+    /// Heading drawn above the progress bar.
+    title: &'a str,
+    /// Title drawn above a successful result.
+    success_title: Option<&'a str>,
+    /// Title drawn above a failed result.
+    failure_title: Option<&'a str>,
+}
+
+impl<'a> TaskMessages<'a> {
+    /// Build the messages of the command with the given progress heading.
+    pub fn new(title: &'a str) -> Self {
+        return TaskMessages {
+            title,
+            success_title: None,
+            failure_title: None,
+        };
+    }
+
+    /// Show `title` above a successful result.
+    pub fn with_success_title(mut self, title: &'a str) -> Self {
+        self.success_title = Some(title);
+        return self;
+    }
+
+    /// Show `title` above a failed result.
+    pub fn with_failure_title(mut self, title: &'a str) -> Self {
+        self.failure_title = Some(title);
+        return self;
+    }
+
+    /// Return the custom success title, if the command set one.
+    pub fn success_title(&self) -> Option<&str> {
+        return self.success_title;
+    }
+
+    /// Return the custom failure title, if the command set one.
+    pub fn failure_title(&self) -> Option<&str> {
+        return self.failure_title;
     }
 }
 
@@ -106,7 +161,10 @@ enum StepWait {
 /// when the task finishes at once, and the command is never slowed down
 /// by the animation. A successful task always shows every step; a failed
 /// task stops the animation at the step it reached and its reason is
-/// displayed immediately.
+/// displayed immediately. A task that returns an empty description gets
+/// the generic result details.
+///
+/// `steps` may be empty, in which case the generic steps are shown.
 ///
 /// Returns only the errors of drawing and reading input. A task failure
 /// is displayed in the interface rather than returned.
@@ -114,20 +172,20 @@ enum StepWait {
 /// # Errors
 ///
 /// Returns [`Error::Runtime`] when the screen cannot be drawn or input
-/// cannot be read, and when `steps` is empty.
+/// cannot be read.
 pub fn run_task<F>(
-    title: &str,
+    messages: &TaskMessages,
     steps: &[ProgressStep],
     task: F,
 ) -> Result<(), Error>
 where
     F: FnOnce() -> Result<String, Error> + Send + 'static,
 {
-    if steps.is_empty() {
-        return Err(Error::Runtime(String::from(
-            "progress requires at least one step",
-        )));
-    }
+    let fallback = default_steps();
+    let chosen = match steps.is_empty() {
+        true => fallback.as_slice(),
+        false => steps,
+    };
     let (sender, receiver) = mpsc::channel();
     let worker = thread::spawn(move || {
         let result = task();
@@ -135,13 +193,13 @@ where
         // so there is nobody left to report the result to.
         let _ = sender.send(result);
     });
-    let mut state = animate(title, steps, &receiver)?;
-    return finish(title, steps, &mut state, &receiver, worker);
+    let mut state = animate(messages, chosen, &receiver)?;
+    return finish(messages, chosen, &mut state, &receiver, worker);
 }
 
 /// Draw every step, watching the task so a failure stops the animation.
 fn animate(
-    title: &str,
+    messages: &TaskMessages,
     steps: &[ProgressStep],
     receiver: &Receiver<Result<String, Error>>,
 ) -> Result<AnimationState, Error> {
@@ -152,7 +210,7 @@ fn animate(
     };
     for (index, step) in steps.iter().enumerate() {
         state.last_index = index;
-        draw_frame(title, step, None)?;
+        draw_frame(messages, step, None)?;
         // A success that arrived early keeps the animation going, so a
         // fast command still shows the complete progress.
         if state.success.is_some() {
@@ -179,7 +237,7 @@ fn animate(
 
 /// Show the task result, waiting for one that outlived the animation.
 fn finish(
-    title: &str,
+    messages: &TaskMessages,
     steps: &[ProgressStep],
     state: &mut AnimationState,
     receiver: &Receiver<Result<String, Error>>,
@@ -203,10 +261,10 @@ fn finish(
         Some(value) => value,
         None => {
             let description = state.success.take().unwrap_or_default();
-            return show_success(title, step, &description);
+            return show_success(messages, step, &description);
         }
     };
-    return show_failure(title, step, &failure);
+    return show_failure(messages, step, &failure);
 }
 
 /// Record the result of a task that outlived the animation.
@@ -248,33 +306,33 @@ fn hold_until(deadline: Instant) {
 
 /// Draw a successful result on top of the last progress frame.
 fn show_success(
-    title: &str,
+    messages: &TaskMessages,
     step: &ProgressStep,
     description: &str,
 ) -> Result<(), Error> {
     let block = ResultBlock::Success {
         description,
     };
-    draw_frame(title, step, Some(&block))?;
-    return wait_for_dismiss(title, step, &block);
+    draw_frame(messages, step, Some(&block))?;
+    return wait_for_dismiss(messages, step, &block);
 }
 
 /// Draw a failed result on top of the progress frame that was reached.
 fn show_failure(
-    title: &str,
+    messages: &TaskMessages,
     step: &ProgressStep,
     error: &Error,
 ) -> Result<(), Error> {
     let block = ResultBlock::Failure {
         error,
     };
-    draw_frame(title, step, Some(&block))?;
-    return wait_for_dismiss(title, step, &block);
+    draw_frame(messages, step, Some(&block))?;
+    return wait_for_dismiss(messages, step, &block);
 }
 
 /// Keep the result on screen until the user proceeds.
 fn wait_for_dismiss(
-    title: &str,
+    messages: &TaskMessages,
     step: &ProgressStep,
     result: &ResultBlock,
 ) -> Result<(), Error> {
@@ -288,7 +346,7 @@ fn wait_for_dismiss(
             ..
         } = event
         {
-            draw_frame(title, step, Some(result))?;
+            draw_frame(messages, step, Some(result))?;
             continue;
         }
         return Ok(());
@@ -297,7 +355,7 @@ fn wait_for_dismiss(
 
 /// Clear the screen and draw one progress frame.
 fn draw_frame(
-    title: &str,
+    messages: &TaskMessages,
     step: &ProgressStep,
     result: Option<&ResultBlock>,
 ) -> Result<(), Error> {
@@ -308,7 +366,7 @@ fn draw_frame(
         Err(error) => return Err(draw_error(&error)),
     }
     let mut writer = LineWriter::new(io::stdout());
-    let drawn = draw_body(title, &mut writer, step, result);
+    let drawn = draw_body(messages, &mut writer, step, result);
     match drawn {
         Ok(()) => {}
         Err(error) => return Err(draw_error(&error)),
@@ -322,12 +380,12 @@ fn draw_frame(
 
 /// Write the heading, the bar, the status, and an optional result.
 fn draw_body<W: Write>(
-    title: &str,
+    messages: &TaskMessages,
     writer: &mut LineWriter<W>,
     step: &ProgressStep,
     result: Option<&ResultBlock>,
 ) -> io::Result<()> {
-    writer.write_line(&format!("{HEADING} {title}"))?;
+    writer.write_line(&format!("{HEADING} {}", messages.title))?;
     writer.write_line("")?;
     writer.write_line(&bar_text(step.percent))?;
     writer.write_line(&step.message)?;
@@ -336,29 +394,67 @@ fn draw_body<W: Write>(
         None => return Ok(()),
     };
     writer.write_line("")?;
-    return write_result(writer, shown);
+    return write_result(writer, messages, shown);
 }
 
 /// Write the result block that follows a progress frame.
 fn write_result<W: Write>(
     writer: &mut LineWriter<W>,
+    messages: &TaskMessages,
     result: &ResultBlock,
 ) -> io::Result<()> {
     return match result {
         ResultBlock::Success {
             description,
         } => {
-            writer.write_line(SUCCESS_TITLE)?;
-            writer.write_block(description)
+            writer.write_line(success_title(messages))?;
+            writer.write_block(details(description))
         }
         ResultBlock::Failure {
             error,
         } => {
-            writer.write_line(FAILURE_TITLE)?;
+            writer.write_line(failure_title(messages))?;
             let reason = reason_of(error);
             writer.write_line(&format!("Reason: {reason}"))
         }
     };
+}
+
+/// Return the success title to draw for `messages`.
+fn success_title<'a>(messages: &'a TaskMessages<'a>) -> &'a str {
+    return match messages.success_title {
+        Some(value) => value,
+        None => SUCCESS_TITLE,
+    };
+}
+
+/// Return the failure title to draw for `messages`.
+fn failure_title<'a>(messages: &'a TaskMessages<'a>) -> &'a str {
+    return match messages.failure_title {
+        Some(value) => value,
+        None => FAILURE_TITLE,
+    };
+}
+
+/// Return the details to draw for a successful result.
+///
+/// A command that describes nothing gets the generic details, so the
+/// result block is never empty.
+fn details(description: &str) -> &str {
+    return match description.is_empty() {
+        true => SUCCESS_DETAILS,
+        false => description,
+    };
+}
+
+/// Return the steps drawn when a command does not define its own.
+fn default_steps() -> Vec<ProgressStep> {
+    return vec![
+        ProgressStep::new(25, "Warming up the engine..."),
+        ProgressStep::new(50, "Running the command..."),
+        ProgressStep::new(75, "Checking the gauges..."),
+        ProgressStep::new(100, "Ready to roll!"),
+    ];
 }
 
 /// Render the progress bar for `percent`, clamped to its range.
@@ -405,7 +501,10 @@ fn closed_error() -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{bar_text, reason_of};
+    use super::{
+        ProgressStep, TaskMessages, bar_text, default_steps, details,
+        failure_title, reason_of, success_title,
+    };
     use crate::common::Error;
 
     #[test]
@@ -432,5 +531,54 @@ mod tests {
     fn reason_strips_the_shared_error_prefix() {
         let error = Error::Runtime(String::from("Permission denied."));
         assert_eq!(reason_of(&error), "Permission denied.");
+    }
+
+    #[test]
+    fn messages_without_titles_use_the_generic_defaults() {
+        let messages = TaskMessages::new("Packing plugin");
+        assert_eq!(success_title(&messages), "✓ Pit stop complete!");
+        assert_eq!(failure_title(&messages), "✗ Engine stalled!");
+        assert_eq!(messages.success_title(), None);
+        assert_eq!(messages.failure_title(), None);
+    }
+
+    #[test]
+    fn custom_titles_override_the_generic_defaults() {
+        let messages = TaskMessages::new("Packing plugin")
+            .with_success_title("✓ Plugin packed!")
+            .with_failure_title("✗ Packing stalled!");
+        assert_eq!(success_title(&messages), "✓ Plugin packed!");
+        assert_eq!(failure_title(&messages), "✗ Packing stalled!");
+        assert_eq!(messages.success_title(), Some("✓ Plugin packed!"));
+        assert_eq!(messages.failure_title(), Some("✗ Packing stalled!"));
+    }
+
+    #[test]
+    fn empty_details_fall_back_to_the_generic_line() {
+        assert_eq!(details(""), "All systems nominal.");
+        assert_eq!(
+            details("Archive: out/plugin.van"),
+            "Archive: out/plugin.van"
+        );
+    }
+
+    #[test]
+    fn generic_steps_are_ordered_and_complete() {
+        let steps = default_steps();
+        assert!(!steps.is_empty());
+        let mut previous = 0;
+        for step in &steps {
+            assert!(step.percent > previous);
+            assert!(!step.message.is_empty());
+            previous = step.percent;
+        }
+        assert_eq!(previous, 100);
+    }
+
+    #[test]
+    fn a_step_keeps_its_message() {
+        let step = ProgressStep::new(50, "Halfway there");
+        assert_eq!(step.percent, 50);
+        assert_eq!(step.message, "Halfway there");
     }
 }
