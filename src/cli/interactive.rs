@@ -1,28 +1,30 @@
 //! Interactive terminal mode for the `van` binary.
 //!
 //! Running `van` without arguments on a terminal opens the menu, and a
-//! selection opens the matching parameter form. Submitting a form leaves
-//! the alternate screen, runs the command through the same wrapper the
-//! classic CLI uses, and then returns to the menu, so the command output
-//! is identical in both modes.
+//! selection opens the matching parameter form. Submitting a form runs
+//! the command inside the interface: a short simulated progress
+//! animation is drawn while the command runs on a worker thread, and its
+//! result stays on screen until the user proceeds, after which the menu
+//! opens again.
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::cursor::MoveTo;
 use crossterm::terminal::{Clear, ClearType};
 
 use vantools::common::Error;
+use vantools::common::validation::{escape_path, escape_text};
+use vantools::pack::PackCommand;
 use vantools::tui::form::{Form, FormOutcome};
 use vantools::tui::menu::{Menu, MenuOutcome};
+use vantools::tui::progress::{ProgressStep, run_task};
 use vantools::tui::terminal::{
     InputEvent, LineWriter, TerminalSession, poll_input,
 };
-
-use super::output;
-use super::pack;
-use super::unpack;
-use super::verify;
+use vantools::unpack::UnpackCommand;
+use vantools::verify::VerifyCommand;
 
 /// Title of the interactive menu.
 const MENU_TITLE: &str = "Select a command:";
@@ -39,15 +41,27 @@ const FORM_HINT: &str = "Tab: next field | Enter: run | Esc: back to menu";
 /// at 76 columns, which fits an 80-column terminal.
 const FIELD_WIDTH: usize = 28;
 
+/// Heading of the `pack` progress display.
+const PACK_TITLE: &str = "Packing plugin";
+
+/// Heading of the `verify` progress display.
+const VERIFY_TITLE: &str = "Verifying archive";
+
+/// Heading of the `unpack` progress display.
+const UNPACK_TITLE: &str = "Unpacking plugin";
+
 /// Run the interactive interface until the user quits it.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Runtime`] when the terminal cannot be entered,
-/// drawn, or read. A failing command is reported on the restored screen
+/// drawn, or read. A failing command is displayed in the interface
 /// instead, so it does not change the process exit code.
 pub(super) fn run() -> Result<(), Error> {
-    let mut session = TerminalSession::enter()?;
+    // The guard keeps the terminal in raw mode for the whole session:
+    // commands are drawn in the interface rather than on a restored
+    // screen.
+    let _session = TerminalSession::enter()?;
     let mut menu = build_menu()?;
     loop {
         draw_menu(&menu)?;
@@ -65,13 +79,9 @@ pub(super) fn run() -> Result<(), Error> {
             None => continue,
             Some(value) => value,
         };
-        // The command runs with the terminal fully restored, so its
-        // output and its own `Ctrl+C` handling look exactly like the
-        // classic CLI. Every selection builds a fresh form, so values
-        // are not preserved between runs.
-        drop(session);
+        // Every selection builds a fresh form, so values are not
+        // preserved between runs.
         execute(index, &values)?;
-        session = TerminalSession::enter()?;
     }
 }
 
@@ -283,36 +293,23 @@ fn build_form(index: usize) -> Result<Option<Form>, Error> {
 
 /// Run the command a submitted form describes.
 ///
-/// A failure is printed exactly like the classic CLI prints it, on the
-/// restored screen, and does not change the process exit code, so the
-/// menu simply re-opens. The caller therefore only sees the errors of
-/// the surrounding terminal work.
+/// Every command goes through [`run_task`], which draws the simulated
+/// progress animation while the command runs on a worker thread and
+/// keeps its result on screen until the user presses a key. A failed
+/// command is displayed in the interface rather than returned, so the
+/// menu simply re-opens and the process exit code is unchanged.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Runtime`] only if the command reports one, which the
-/// caller must not turn into an exit code; the error is printed here.
+/// Returns [`Error::Runtime`] only when the interface cannot be drawn or
+/// input cannot be read.
 fn execute(index: usize, values: &[String]) -> Result<(), Error> {
-    let outcome = match index {
+    return match index {
         0 => execute_pack(values),
         1 => execute_verify(values),
         2 => execute_unpack(values),
         _ => Ok(()),
     };
-    return match outcome {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let message = format!("{error}");
-            output::log_err(&message, "");
-            Ok(())
-        }
-    };
-}
-
-/// Append a required flag and its value to the argument list.
-fn push_flag(args: &mut Vec<String>, flag: &str, value: &str) {
-    args.push(String::from(flag));
-    args.push(String::from(value));
 }
 
 /// Return true when any field value starts with a dash.
@@ -328,24 +325,18 @@ fn values_start_with_dash(values: &[String]) -> bool {
     return false;
 }
 
-/// Report the error used when a form value would be read as a flag.
+/// Build the error shown for a form value that starts with a dash.
 ///
-/// The error is printed on the restored screen exactly like a failed
-/// command, and the caller returns `Ok(())` so the menu re-opens. A
-/// submission therefore changes neither the screen nor the exit code.
-fn reject_dash_values() {
-    let error =
-        Error::Runtime(String::from("form values must not start with a dash"));
-    let message = format!("{error}");
-    output::log_err(&message, "");
+/// Such a value would be read by the CLI parser as a flag instead of as
+/// the path the form displays, so the command is not run.
+fn dash_value_error() -> Error {
+    return Error::Runtime(String::from(
+        "form values must not start with a dash",
+    ));
 }
 
-/// Build the `pack` arguments of a submitted form and run the command.
+/// Run a submitted `pack` form in the interface.
 fn execute_pack(values: &[String]) -> Result<(), Error> {
-    if values_start_with_dash(values) {
-        reject_dash_values();
-        return Ok(());
-    }
     let split = values.split_first();
     let (source, rest) = match split {
         Some(value) => value,
@@ -359,18 +350,20 @@ fn execute_pack(values: &[String]) -> Result<(), Error> {
     if !surplus.is_empty() {
         return Err(unexpected_field_count());
     }
-    let mut args: Vec<String> = Vec::new();
-    push_flag(&mut args, "-s", source);
-    push_flag(&mut args, "-t", target);
-    return pack::run_cli(&args);
+    let rejected = values_start_with_dash(values);
+    let source = PathBuf::from(source.as_str());
+    let target = PathBuf::from(target.as_str());
+    let task = move || {
+        if rejected {
+            return Err(dash_value_error());
+        }
+        return run_pack(&source, &target);
+    };
+    return run_task(PACK_TITLE, &pack_steps(), task);
 }
 
-/// Build the `verify` arguments of a submitted form and run the command.
+/// Run a submitted `verify` form in the interface.
 fn execute_verify(values: &[String]) -> Result<(), Error> {
-    if values_start_with_dash(values) {
-        reject_dash_values();
-        return Ok(());
-    }
     let split = values.split_first();
     let (source, surplus) = match split {
         Some(value) => value,
@@ -379,17 +372,19 @@ fn execute_verify(values: &[String]) -> Result<(), Error> {
     if !surplus.is_empty() {
         return Err(unexpected_field_count());
     }
-    let mut args: Vec<String> = Vec::new();
-    push_flag(&mut args, "-s", source);
-    return verify::run_cli(&args);
+    let rejected = values_start_with_dash(values);
+    let source = PathBuf::from(source.as_str());
+    let task = move || {
+        if rejected {
+            return Err(dash_value_error());
+        }
+        return run_verify(&source);
+    };
+    return run_task(VERIFY_TITLE, &verify_steps(), task);
 }
 
-/// Build the `unpack` arguments of a submitted form and run the command.
+/// Run a submitted `unpack` form in the interface.
 fn execute_unpack(values: &[String]) -> Result<(), Error> {
-    if values_start_with_dash(values) {
-        reject_dash_values();
-        return Ok(());
-    }
     let split = values.split_first();
     let (source, rest) = match split {
         Some(value) => value,
@@ -403,10 +398,16 @@ fn execute_unpack(values: &[String]) -> Result<(), Error> {
     if !surplus.is_empty() {
         return Err(unexpected_field_count());
     }
-    let mut args: Vec<String> = Vec::new();
-    push_flag(&mut args, "-s", source);
-    push_flag(&mut args, "-t", target);
-    return unpack::run_cli(&args);
+    let rejected = values_start_with_dash(values);
+    let source = PathBuf::from(source.as_str());
+    let target = PathBuf::from(target.as_str());
+    let task = move || {
+        if rejected {
+            return Err(dash_value_error());
+        }
+        return run_unpack(&source, &target);
+    };
+    return run_task(UNPACK_TITLE, &unpack_steps(), task);
 }
 
 /// Build the error reported when a form hands over the wrong number of
@@ -415,4 +416,85 @@ fn unexpected_field_count() -> Error {
     return Error::Runtime(String::from(
         "form returned an unexpected field count",
     ));
+}
+
+/// Steps shown while a plugin is packed.
+fn pack_steps() -> Vec<ProgressStep> {
+    return vec![
+        ProgressStep::new(20, "Preparing engine..."),
+        ProgressStep::new(40, "Checking plugin configuration..."),
+        ProgressStep::new(60, "Packing plugin files..."),
+        ProgressStep::new(80, "Finalizing package..."),
+        ProgressStep::new(100, "Ready to roll!"),
+    ];
+}
+
+/// Steps shown while an archive is verified.
+fn verify_steps() -> Vec<ProgressStep> {
+    return vec![
+        ProgressStep::new(25, "Popping the hood..."),
+        ProgressStep::new(50, "Inspecting archive structure..."),
+        ProgressStep::new(75, "Checking manifest and entrypoint..."),
+        ProgressStep::new(100, "Roadworthiness confirmed!"),
+    ];
+}
+
+/// Steps shown while an archive is unpacked.
+fn unpack_steps() -> Vec<ProgressStep> {
+    return vec![
+        ProgressStep::new(20, "Preparing engine..."),
+        ProgressStep::new(40, "Reading archive..."),
+        ProgressStep::new(60, "Unpacking plugin files..."),
+        ProgressStep::new(80, "Installing plugin..."),
+        ProgressStep::new(100, "Ready to roll!"),
+    ];
+}
+
+/// Run `pack` and describe what it produced.
+fn run_pack(source: &Path, target: &Path) -> Result<String, Error> {
+    let command = PackCommand::new(source.to_path_buf(), target.to_path_buf());
+    let report = command.run()?;
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(String::from("Plugin successfully packed."));
+    if report.target_created {
+        let created = escape_path(target);
+        lines.push(format!("Target directory created: {created}"));
+    }
+    if report.overwrote_existing {
+        let archive = escape_path(&report.archive_path);
+        lines.push(format!("Existing archive overwritten: {archive}"));
+    }
+    let archive = escape_path(&report.archive_path);
+    lines.push(format!("Archive: {archive}"));
+    lines.push(format!("Files written: {}", report.files_written));
+    let ignored = report.ignored_files.len();
+    lines.push(format!("Files ignored: {ignored}"));
+    return Ok(lines.join("\n"));
+}
+
+/// Run `verify` and describe what it found.
+fn run_verify(source: &Path) -> Result<String, Error> {
+    let command = VerifyCommand::new(source.to_path_buf());
+    let report = command.run()?;
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(String::from("Archive verified successfully."));
+    lines.push(format!("Archive: {}", escape_path(&report.source)));
+    let name = escape_text(&report.manifest.name);
+    let version = escape_text(&report.manifest.version);
+    lines.push(format!("Plugin: {name} {version}"));
+    lines.push(format!("Entries: {}", report.entry_names.len()));
+    return Ok(lines.join("\n"));
+}
+
+/// Run `unpack` and describe what it installed.
+fn run_unpack(source: &Path, target: &Path) -> Result<String, Error> {
+    let command =
+        UnpackCommand::new(source.to_path_buf(), target.to_path_buf());
+    let report = command.run()?;
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(String::from("Plugin successfully unpacked."));
+    lines.push(format!("Archive: {}", escape_path(&report.archive)));
+    lines.push(format!("Installed to: {}", escape_path(&report.target)));
+    lines.push(format!("Files written: {}", report.files_written));
+    return Ok(lines.join("\n"));
 }

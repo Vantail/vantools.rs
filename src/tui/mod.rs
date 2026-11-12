@@ -4,11 +4,12 @@
 //! carriage-return-safe line writer, the raw-mode and alternate-screen
 //! guard, the input layer, the menu widget that holds selection state
 //! and draws one frame, the text field widget that stores and draws one
-//! editable value, and the form widget that composes text segments and
-//! fields into one command line. Drawing and session wiring are added in
-//! later tasks.
+//! editable value, the form widget that composes text segments and
+//! fields into one command line, and the progress runner that shows a
+//! simulated animation while a command runs.
 
 pub mod field;
 pub mod form;
 pub mod menu;
+pub mod progress;
 pub mod terminal;
