@@ -56,7 +56,7 @@ Options:
 
 ```text
 $ van --version
-van 0.1.0
+van 0.2.0
 ```
 
 Running `van` without arguments prints the help text to stderr and exits
